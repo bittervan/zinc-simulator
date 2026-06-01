@@ -5,6 +5,8 @@ project(zinc-simulator LANGUAGES CXX)
 add_executable(zinc-simulator
     src/main.cpp
     src/binary_loader.cpp
+    src/memory.cpp
+    src/rv64_core.cpp
 )
 
 target_compile_features(zinc-simulator PRIVATE cxx_std_20)
