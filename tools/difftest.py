@@ -13,7 +13,7 @@ COMMIT_RE = re.compile(
     r"(?P<priv>\d+)\s+"
     r"(?P<pc>0x[0-9a-fA-F]+)\s+"
     r"\((?P<instruction>0x[0-9a-fA-F]+)\)"
-    r"(?:\s+x(?P<reg>\d+)\s+(?P<value>0x[0-9a-fA-F]+))?\s*$"
+    r"(?P<effects>.*)$"
 )
 
 
@@ -23,6 +23,11 @@ def hex64(value: int) -> str:
 
 def hex32(value: int) -> str:
     return f"0x{value:08x}"
+
+
+def normalize_mem_value(value: int, size: int) -> str:
+    mask = (1 << (size * 8)) - 1
+    return hex64(value & mask)
 
 
 def run_command(command: list[str]) -> str:
@@ -48,13 +53,37 @@ def parse_spike_log(log: str) -> list[dict]:
         if match is None:
             continue
 
-        reg = match.group("reg")
         reg_write = None
-        if reg is not None:
-            reg_write = {
-                "reg": int(reg),
-                "value": hex64(int(match.group("value"), 16)),
-            }
+        memory_writes = []
+        tokens = match.group("effects").split()
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if token.startswith("x") and index + 1 < len(tokens):
+                reg_write = {
+                    "reg": int(token[1:]),
+                    "value": hex64(int(tokens[index + 1], 16)),
+                }
+                index += 2
+            elif token == "mem" and index + 1 < len(tokens):
+                address = int(tokens[index + 1], 16)
+                if index + 2 < len(tokens) and tokens[index + 2].startswith("0x"):
+                    value_token = tokens[index + 2]
+                    size = max(1, (len(value_token) - 2 + 1) // 2)
+                    memory_writes.append(
+                        {
+                            "address": hex64(address),
+                            "size": size,
+                            "value": normalize_mem_value(int(value_token, 16), size),
+                        }
+                    )
+                    index += 3
+                else:
+                    # Spike also logs memory reads as "mem <addr>"; reads are not
+                    # architecture-visible commits for the current difftest.
+                    index += 2
+            else:
+                index += 1
 
         commits.append(
             {
@@ -62,7 +91,7 @@ def parse_spike_log(log: str) -> list[dict]:
                 "pc": hex64(int(match.group("pc"), 16)),
                 "instruction": hex32(int(match.group("instruction"), 16)),
                 "reg_write": reg_write,
-                "memory_writes": [],
+                "memory_writes": memory_writes,
             }
         )
 
@@ -79,25 +108,65 @@ def comparable(commit: dict) -> dict:
     }
 
 
-def compare_commits(spike: list[dict], zinc: list[dict]) -> None:
+def compare_commits(case: str, spike: list[dict], zinc: list[dict]) -> None:
     count = min(len(spike), len(zinc))
     for index in range(count):
         spike_commit = comparable(spike[index])
         zinc_commit = comparable(zinc[index])
         if spike_commit != zinc_commit:
             raise AssertionError(
-                f"commit mismatch at index {index}\n"
+                f"commit mismatch in case '{case}' at index {index}\n"
                 f"spike: {json.dumps(spike_commit, sort_keys=True)}\n"
                 f"zinc:  {json.dumps(zinc_commit, sort_keys=True)}"
             )
 
     if len(spike) != len(zinc):
-        raise AssertionError(f"commit count mismatch: spike={len(spike)} zinc={len(zinc)}")
+        raise AssertionError(f"commit count mismatch in case '{case}': spike={len(spike)} zinc={len(zinc)}")
 
 
 def write_json(path: Path, document: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+
+
+def run_case(args: argparse.Namespace, case: str) -> int:
+    elf = args.tests_dir / f"{case}.elf"
+    binary = args.tests_dir / f"{case}.bin"
+    out_dir = args.out_dir / case
+
+    spike_log = run_command(
+        [
+            str(args.spike),
+            f"--isa={args.isa}",
+            f"--pc={args.pc}",
+            f"--instructions={args.steps}",
+            "-l",
+            "--log-commits",
+            str(elf),
+        ]
+    )
+    spike_commits = parse_spike_log(spike_log)
+    spike_document = {
+        "source": "spike",
+        "case": case,
+        "isa": args.isa,
+        "entry": hex64(int(args.pc, 16)),
+        "commits": spike_commits,
+    }
+
+    zinc_json = run_command(
+        [str(args.zinc), "--max-steps", str(args.steps), "--trace-json", str(binary)]
+    )
+    zinc_document = json.loads(zinc_json)
+    zinc_document["case"] = case
+    zinc_commits = zinc_document["commits"]
+
+    write_json(out_dir / "spike.json", spike_document)
+    write_json(out_dir / "zinc.json", zinc_document)
+
+    compare_commits(case, spike_commits, zinc_commits)
+    print(f"{case}: passed {len(spike_commits)} commits")
+    return len(spike_commits)
 
 
 def main() -> int:
@@ -109,45 +178,25 @@ def main() -> int:
     parser.add_argument(
         "--zinc", type=Path, default=repo_root / "build/zinc-simulator/zinc-simulator"
     )
-    parser.add_argument("--elf", type=Path, default=repo_root / "build/tests/add.elf")
-    parser.add_argument("--bin", type=Path, default=repo_root / "build/tests/add.bin")
+    parser.add_argument("--tests-dir", type=Path, default=repo_root / "build/tests")
+    parser.add_argument("--case", action="append", dest="cases")
     parser.add_argument("--out-dir", type=Path, default=repo_root / "build/difftest")
     parser.add_argument("--isa", default="RV64I")
     parser.add_argument("--pc", default="0x80000000")
     args = parser.parse_args()
 
-    spike_log = run_command(
-        [
-            str(args.spike),
-            f"--isa={args.isa}",
-            f"--pc={args.pc}",
-            f"--instructions={args.steps}",
-            "-l",
-            "--log-commits",
-            str(args.elf),
-        ]
-    )
-    spike_commits = parse_spike_log(spike_log)
-    spike_document = {
-        "source": "spike",
-        "isa": args.isa,
-        "entry": hex64(int(args.pc, 16)),
-        "commits": spike_commits,
-    }
+    cases = args.cases
+    if not cases:
+        cases = sorted(path.stem for path in args.tests_dir.glob("*.elf"))
+    if not cases:
+        raise RuntimeError(f"no test ELF files found in {args.tests_dir}")
 
-    zinc_json = run_command(
-        [str(args.zinc), "--max-steps", str(args.steps), "--trace-json", str(args.bin)]
-    )
-    zinc_document = json.loads(zinc_json)
-    zinc_commits = zinc_document["commits"]
+    total = 0
+    for case in cases:
+        total += run_case(args, case)
 
-    write_json(args.out_dir / "spike.json", spike_document)
-    write_json(args.out_dir / "zinc.json", zinc_document)
-
-    compare_commits(spike_commits, zinc_commits)
-    print(f"difftest passed: {len(spike_commits)} commits")
-    print(f"wrote {args.out_dir / 'spike.json'}")
-    print(f"wrote {args.out_dir / 'zinc.json'}")
+    print(f"difftest passed: {len(cases)} cases, {total} commits")
+    print(f"wrote {args.out_dir}")
     return 0
 
 

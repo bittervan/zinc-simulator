@@ -126,7 +126,17 @@ void print_json_trace(std::span<const zinc::sim::CommitTrace> commits) {
             std::cout << "null";
         }
         std::cout << ",\n";
-        std::cout << "      \"memory_writes\": []\n";
+        std::cout << "      \"memory_writes\": [";
+        for (std::size_t write_index = 0; write_index < commit.memory_writes.size(); ++write_index) {
+            const auto& write = commit.memory_writes[write_index];
+            if (write_index != 0) {
+                std::cout << ", ";
+            }
+            std::cout << "{\"address\": \"" << hex64_string(write.address) << "\", \"size\": "
+                      << static_cast<int>(write.size) << ", \"value\": \"" << hex64_string(write.value)
+                      << "\"}";
+        }
+        std::cout << "]\n";
         std::cout << "    }";
         if (i + 1 < commits.size()) {
             std::cout << ',';
