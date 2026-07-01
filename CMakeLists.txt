@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(zinc_sim_lib
     src/decode.cpp
+    src/elf_loader.cpp
 )
 
 target_include_directories(zinc_sim_lib PUBLIC include)
