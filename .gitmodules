@@ -1,0 +1,3 @@
+[submodule "third_party/elfio"]
+	path = third_party/elfio
+	url = https://github.com/serge1/elfio.git
