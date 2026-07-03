@@ -11,8 +11,13 @@ int main(int argc, char *argv[]) {
     }
 
     std::filesystem::path elf_path(argv[1]);
+    ElfImage image = ElfLoader::load(elf_path);
 
-    ElfLoader loader(elf_path);
+    for (auto seg : image.segments) {
+        std::cout << std::hex << seg.addr << std::endl;
+    }
+
+    std::cout << "entry: " << image.entry << std::endl;
 
     return 0;
 }

@@ -10,7 +10,17 @@ add_library(zinc_sim_lib
     src/elf_loader.cpp
 )
 
+add_library(zinc_elfio INTERFACE)
+
+target_include_directories(zinc_elfio INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/elfio
+)
+
 target_include_directories(zinc_sim_lib PUBLIC include)
+
+target_link_libraries(zinc_sim_lib PRIVATE
+    zinc_elfio
+)
 
 target_compile_options(zinc_sim_lib PRIVATE
     -Wall

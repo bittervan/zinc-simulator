@@ -4,12 +4,20 @@
 #include <vector>
 #include <cstdint>
 
-class ElfLoader {
-
+class ElfSegment {
 public:
-    ElfLoader(const std::filesystem::path &elf_path);
+    std::uint64_t addr;
+    std::uint64_t size;
+    std::vector<std::uint8_t> data;
+};
 
-private:
-    std::vector<uint8_t> file_bytes;
+class ElfImage {
+public:
+    std::uint64_t entry;
+    std::vector<ElfSegment> segments;
+};
 
+class ElfLoader {
+public:
+    static ElfImage load(const std::filesystem::path &elf_path);
 };
