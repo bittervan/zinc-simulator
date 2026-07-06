@@ -23,7 +23,7 @@ int main(int argc, char *argv[]) {
 
     for (const auto &seg : image.segments) {
         mem.load(seg.addr, seg.data);
-        mem.clear(seg.addr, seg.size - seg.data.size());
+        mem.clear(seg.addr + seg.data.size(), seg.size - seg.data.size());
     }
 
     return 0;
