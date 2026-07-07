@@ -7,6 +7,7 @@
 #include <decode.h>
 #include <elf_loader.h>
 #include <ram.h>
+#include <cpu.h>
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
@@ -24,6 +25,12 @@ int main(int argc, char *argv[]) {
     for (const auto &seg : image.segments) {
         mem.load(seg.addr, seg.data);
         mem.clear(seg.addr + seg.data.size(), seg.size - seg.data.size());
+    }
+
+    Cpu cpu(image.entry);
+
+    while (true) {
+        cpu.step(mem);
     }
 
     return 0;

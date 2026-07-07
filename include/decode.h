@@ -19,7 +19,35 @@ constexpr std::uint32_t OPCODE_OP_32 =       0b0111011;
 
 constexpr std::uint32_t INSN_MASK_OPCODE =   0b0000000'00000'00000'000'00000'1111111;
 
-constexpr std::uint32_t INSN_U_IMM_MASK =    0b1111111'11111'11111'111'00000'0000000;
+constexpr std::uint32_t INSN_U_TYPE_IMM_MASK =    0b1111111'11111'11111'111'00000'0000000;
+
+static inline std::uint32_t get_opcode(std::uint32_t insn) {
+    return insn & INSN_MASK_OPCODE;
+}
+
+static inline std::int64_t get_u_type_imm(std::uint32_t insn) {
+    return static_cast<int64_t>(
+        static_cast<int32_t>(insn & INSN_U_TYPE_IMM_MASK)
+    );
+}
+
+static inline std::int64_t sign_extend(std::uint64_t value, int n_bits) {
+    int n_shift = 64 - n_bits;
+    return static_cast<std::int64_t>(value << n_shift) >> n_shift;
+}
+
+static inline std::int64_t get_j_type_imm(std::uint32_t insn) {
+    std::uint32_t u_imm =   (((insn >> 31) & 0x1) << 20) |
+                            (((insn >> 21) & 0x3ff) << 1) |
+                            (((insn >> 20) & 0x1) << 11) |
+                            (((insn >> 12) & 0xff) << 12);
+    
+    return sign_extend(u_imm, 21);
+}
+
+static inline std::uint32_t get_rd(std::uint32_t insn) {
+    return 0x1f & (insn >> 7);
+}
 
 enum class BranchType : std::uint32_t {
     Eq =    0b000,

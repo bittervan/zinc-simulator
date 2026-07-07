@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(zinc_sim_lib
     src/decode.cpp
     src/ram.cpp
+    src/cpu.cpp
     src/elf_loader.cpp
 )
 

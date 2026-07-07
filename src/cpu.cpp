@@ -3,10 +3,12 @@
 #include <cpu.h>
 #include <decode.h>
 #include <stdexcept>
+#include <fstream>
+#include <format>
 
 Cpu::Cpu(std::uint64_t init_pc) : pc(init_pc), gprs(NUM_GPRS, 0) {}
 
-Commit Cpu::step(std::uint64_t pc, Memory &mem) {
+Commit Cpu::step(Memory &mem) {
     std::uint32_t insn = mem.get_32(pc);
     Commit ret {
         .pc = pc,
@@ -16,14 +18,15 @@ Commit Cpu::step(std::uint64_t pc, Memory &mem) {
         .mem_writes = {},
     };
 
-    const std::uint32_t opcode = insn & 0x7f;
+    DecodedInsn decoded = Decoder::decode(insn);
 
-    switch (opcode) {
-        case 0b0110111:
-        default: {
-            throw std::runtime_error("Not a valid opcode");
-        }
+    if (std::holds_alternative<InvalidInsn>(decoded)) {
+        throw std::runtime_error(
+            std::format("Invalid instruction at {:016x}: {:08x}", pc, insn)
+        );
     }
+
+    this->pc += 4;
 
     return ret;
 }

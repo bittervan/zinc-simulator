@@ -31,7 +31,7 @@ public:
 class Cpu {
 public:
     Cpu(std::uint64_t init_pc);
-    Commit step(std::uint64_t pc, Memory &mem);
+    Commit step(Memory &mem);
 
 private:
     std::uint64_t pc;
