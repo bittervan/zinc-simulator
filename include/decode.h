@@ -49,6 +49,22 @@ static inline std::uint32_t get_rd(std::uint32_t insn) {
     return 0x1f & (insn >> 7);
 }
 
+static inline std::uint32_t get_funct3(std::uint32_t insn) {
+    return 0x7 & (insn >> 12);
+}
+
+static inline std::uint32_t get_zicsr_csr(std::uint32_t insn) {
+    return 0xfff & (insn >> 20);
+}
+
+static inline std::uint32_t get_rs1(std::uint32_t insn) {
+    return 0x1f & (insn >> 15);
+}
+
+static inline std::uint32_t get_zicsr_uimm(std::uint32_t insn) {
+    return 0x1f & (insn >> 15);
+}
+
 enum class BranchType : std::uint32_t {
     Eq =    0b000,
     Ne =    0b001,
@@ -82,19 +98,19 @@ enum class OpType : std::uint32_t {
 };
 
 enum class SystemInsnType {
-    Ecall,
-    Ebreak,
-    Csrrw,
-    Csrrs,
-    Csrrc,
-    Csrrwi,
-    Csrrsi,
-    Csrrci,
+    Ecall =     0b000,
+    Csrrw =     0b001,
+    Csrrs =     0b010,
+    Csrrc =     0b011,
+    Ebreak =    0b100,
+    Csrrwi =    0b101,
+    Csrrsi =    0b110,
+    Csrrci =    0b111,
 };
 
 enum class MiscMemInsnType {
-    Fence,
-    FenceI,
+    Fence =     0b000,
+    FenceI =    0b001,
 };
 
 struct LuiInsn {
