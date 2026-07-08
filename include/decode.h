@@ -17,17 +17,13 @@ constexpr std::uint32_t OPCODE_SYSTEM =      0b1110011;
 constexpr std::uint32_t OPCODE_OP_IMM_32 =   0b0011011;
 constexpr std::uint32_t OPCODE_OP_32 =       0b0111011;
 
-constexpr std::uint32_t INSN_MASK_OPCODE =   0b0000000'00000'00000'000'00000'1111111;
-
-constexpr std::uint32_t INSN_U_TYPE_IMM_MASK =    0b1111111'11111'11111'111'00000'0000000;
-
 static inline std::uint32_t get_opcode(std::uint32_t insn) {
-    return insn & INSN_MASK_OPCODE;
+    return insn & 0b0000000'00000'00000'000'00000'1111111;
 }
 
 static inline std::int64_t get_u_type_imm(std::uint32_t insn) {
     return static_cast<int64_t>(
-        static_cast<int32_t>(insn & INSN_U_TYPE_IMM_MASK)
+        static_cast<int32_t>(insn & 0b1111111'11111'11111'111'00000'0000000)
     );
 }
 
@@ -53,6 +49,18 @@ static inline std::uint32_t get_funct3(std::uint32_t insn) {
     return 0x7 & (insn >> 12);
 }
 
+static inline std::uint32_t get_funct7(std::uint32_t insn) {
+    return 0x7f & (insn >> 25);
+}
+
+static inline std::uint32_t get_shamt(std::uint32_t insn) {
+    return 0x1f & (insn >> 20);
+}
+
+static inline std::uint32_t get_rs2(std::uint32_t insn) {
+    return 0x1f & (insn >> 20);
+}
+
 static inline std::uint32_t get_zicsr_csr(std::uint32_t insn) {
     return 0xfff & (insn >> 20);
 }
@@ -63,6 +71,26 @@ static inline std::uint32_t get_rs1(std::uint32_t insn) {
 
 static inline std::uint32_t get_zicsr_uimm(std::uint32_t insn) {
     return 0x1f & (insn >> 15);
+}
+
+static inline std::int64_t get_i_type_imm(std::uint32_t insn) {
+    return sign_extend(0xfff & (insn > 20), 12);
+}
+
+static inline std::int64_t get_s_type_imm(std::uint32_t insn) {
+    std::uint32_t u_imm =   (((insn >> 25) & 0x7f) << 5) |
+                            (((insn >> 7) & 0x1f));
+
+    return sign_extend(u_imm, 12);
+}
+
+static inline std::int64_t get_b_type_imm(std::uint32_t insn) {
+    std::uint32_t u_imm =   (((insn >> 31) & 0x1) << 12) |
+                            (((insn >> 25) & 0x3f) << 5) |
+                            (((insn >> 8) & 0xf) << 1)   |
+                            (((insn >> 7) & 0x1) << 11);
+
+    return sign_extend(u_imm, 13);
 }
 
 enum class BranchType : std::uint32_t {
