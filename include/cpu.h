@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <ram.h>
+#include <array>
 
 class RegWrite {
 public:
@@ -28,12 +29,23 @@ public:
     std::vector<MemAccess> mem_writes;
 };
 
-class Cpu {
+class Core {
 public:
-    Cpu(std::uint64_t init_pc);
-    Commit step(Memory &mem);
+    Core(std::uint64_t init_pc);
+    // Commit step(Memory &mem);
+
+    std::uint64_t get_pc() const;
+    void set_pc(std::uint64_t new_pc);
+
+    std::uint64_t get_gpr(uint32_t index) const;
+    void set_gpr(uint32_t index, uint64_t value);
+
+    std::uint64_t get_csr(uint32_t csr) const;
+    void set_csr(uint32_t csr, uint64_t value);
+
 
 private:
     std::uint64_t pc;
     std::vector<std::uint64_t> gprs;
+    std::array<std::uint64_t, 4096> csrs;
 };

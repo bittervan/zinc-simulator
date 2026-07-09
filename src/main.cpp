@@ -8,6 +8,8 @@
 #include <elf_loader.h>
 #include <ram.h>
 #include <cpu.h>
+#include <execute.h>
+#include <format>
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
@@ -27,10 +29,26 @@ int main(int argc, char *argv[]) {
         mem.clear(seg.addr + seg.data.size(), seg.size - seg.data.size());
     }
 
-    Cpu cpu(image.entry);
+    Core core(image.entry);
 
     while (true) {
-        cpu.step(mem);
+        std::uint32_t insn = mem.get_32(core.get_pc());
+
+        DecodedInsn decoded = Decoder::decode(insn);
+
+        if (std::holds_alternative<InvalidInsn>(decoded)) {
+            throw std::runtime_error(
+                std::format("Invalid instruction at {:016x}: {:08x}", core.get_pc(), insn)
+            );
+        }
+
+        if (const SystemInsn *sys_insn = std::get_if<SystemInsn>(&decoded)) {
+            if (sys_insn->type == SystemInsnType::Ecall) {
+                break;
+            }
+        }
+
+        Commit step_commit = Executor::step(core, mem, decoded);
     }
 
     return 0;

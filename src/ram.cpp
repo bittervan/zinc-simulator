@@ -16,27 +16,27 @@ void Memory::clear(std::uint64_t addr, std::uint64_t size) {
     std::fill(data.begin() + offset, data.begin() + offset + size, 0);
 }
 
-std::uint8_t Memory::get_8(std::uint64_t addr) {
+std::uint8_t Memory::get_8(std::uint64_t addr) const {
     uint64_t offset = addr - this->base;
     return this->data[offset];
 }
 
-std::uint16_t Memory::get_16(std::uint64_t addr) {
+std::uint16_t Memory::get_16(std::uint64_t addr) const {
     assert(!(addr % 2));
     uint64_t offset = addr - this->base;
-    return reinterpret_cast<std::uint16_t*>(this->data.data())[offset / 2];
+    return reinterpret_cast<const std::uint16_t*>(this->data.data())[offset / 2];
 }
 
-std::uint32_t Memory::get_32(std::uint64_t addr) {
+std::uint32_t Memory::get_32(std::uint64_t addr) const {
     assert(!(addr % 4));
     uint64_t offset = addr - this->base;
-    return reinterpret_cast<std::uint32_t*>(this->data.data())[offset / 4];
+    return reinterpret_cast<const std::uint32_t*>(this->data.data())[offset / 4];
 }
 
-std::uint64_t Memory::get_64(std::uint64_t addr) {
+std::uint64_t Memory::get_64(std::uint64_t addr) const {
     assert(!(addr % 8));
     uint64_t offset = addr - this->base;
-    return reinterpret_cast<std::uint64_t*>(this->data.data())[offset / 8];
+    return reinterpret_cast<const std::uint64_t*>(this->data.data())[offset / 8];
 }
 
 void Memory::set_8(std::uint64_t addr, std::uint8_t data) {

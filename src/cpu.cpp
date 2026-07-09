@@ -2,31 +2,32 @@
 
 #include <cpu.h>
 #include <decode.h>
-#include <stdexcept>
-#include <fstream>
-#include <format>
+#include <execute.h>
 
-Cpu::Cpu(std::uint64_t init_pc) : pc(init_pc), gprs(NUM_GPRS, 0) {}
+Core::Core(std::uint64_t init_pc) : pc(init_pc), gprs(NUM_GPRS, 0) {}
 
-Commit Cpu::step(Memory &mem) {
-    std::uint32_t insn = mem.get_32(pc);
-    Commit ret {
-        .pc = pc,
-        .insn = insn,
-        .reg_writes = {},
-        .mem_reads = {},
-        .mem_writes = {},
-    };
-
-    DecodedInsn decoded = Decoder::decode(insn);
-
-    if (std::holds_alternative<InvalidInsn>(decoded)) {
-        throw std::runtime_error(
-            std::format("Invalid instruction at {:016x}: {:08x}", pc, insn)
-        );
-    }
-
-    this->pc += 4;
-
-    return ret;
+std::uint64_t Core::get_pc() const {
+    return this->pc;
 }
+
+void Core::set_pc(std::uint64_t new_pc) {
+    this->pc = new_pc;
+}
+
+std::uint64_t Core::get_gpr(uint32_t index) const {
+    return this->gprs[index];
+}
+
+void Core::set_gpr(uint32_t index, uint64_t value) {
+    if (!index) return;
+    this->gprs[index] = value;
+}
+
+std::uint64_t Core::get_csr(uint32_t csr) const {
+    return this->csrs[csr];
+}
+
+void Core::set_csr(uint32_t csr, uint64_t value) {
+    this->csrs[csr] = value;
+}
+
