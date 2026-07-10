@@ -20,8 +20,6 @@ int main(int argc, char *argv[]) {
     std::filesystem::path elf_path(argv[1]);
     ElfImage image = ElfLoader::load(elf_path);
 
-    std::cout << "entry: " << image.entry << std::endl;
-
     Memory mem(MEM_BASE, MEM_SIZE);
 
     for (const auto &seg : image.segments) {
@@ -49,6 +47,8 @@ int main(int argc, char *argv[]) {
         }
 
         Commit step_commit = Executor::step(core, mem, decoded);
+
+        std::cout << step_commit.to_string() << std::endl;
     }
 
     return 0;

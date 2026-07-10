@@ -27,6 +27,8 @@ public:
     std::vector<RegWrite> reg_writes;
     std::vector<MemAccess> mem_reads;
     std::vector<MemAccess> mem_writes;
+
+    std::string to_string() const;
 };
 
 class Core {
@@ -42,7 +44,6 @@ public:
 
     std::uint64_t get_csr(uint32_t csr) const;
     void set_csr(uint32_t csr, uint64_t value);
-
 
 private:
     std::uint64_t pc;

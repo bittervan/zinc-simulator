@@ -14,6 +14,11 @@ Commit Executor::step(Core &core, Memory &mem, const DecodedInsn &insn) {
     std::uint64_t pc = core.get_pc();
     std::uint32_t raw_insn = mem.get_32(pc);
 
+    // Drop x0 write.
+    std::erase_if(result.reg_writes, [](const RegWrite &write) {
+        return write.type == "x" && write.num == 0;
+    });
+
     core.set_pc(result.next_pc);
     
     for (const RegWrite &reg_write : result.reg_writes) {
@@ -222,13 +227,15 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
                 }
             );
 
-            ret.reg_writes.push_back(
-                RegWrite{
-                    .type = "csr",
-                    .num = insn.csr,
-                    .value = new_csr_val
-                }
-            );
+            if (insn.rs1) {
+                ret.reg_writes.push_back(
+                    RegWrite{
+                        .type = "csr",
+                        .num = insn.csr,
+                        .value = new_csr_val
+                    }
+                );
+            }
 
             break;
         }
@@ -238,6 +245,8 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
             );
         }
     }
+
+    ret.next_pc = core.get_pc() + 4;
     return ret;
 }
 

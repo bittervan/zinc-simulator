@@ -71,7 +71,7 @@ static inline std::uint32_t get_zicsr_uimm(std::uint32_t insn) {
 }
 
 static inline std::int64_t get_i_type_imm(std::uint32_t insn) {
-    return sign_extend(0xfff & (insn > 20), 12);
+    return sign_extend(0xfff & (insn >> 20), 12);
 }
 
 static inline std::int64_t get_s_type_imm(std::uint32_t insn) {
