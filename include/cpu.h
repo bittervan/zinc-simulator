@@ -31,6 +31,12 @@ public:
     std::string to_string() const;
 };
 
+enum class Privilege {
+    Machine =       0b00,
+    Supervisor =    0b01,
+    User =          0b11,
+};
+
 class Core {
 public:
     Core(std::uint64_t init_pc);
@@ -46,6 +52,7 @@ public:
     void set_csr(uint32_t csr, uint64_t value);
 
 private:
+    Privilege priv = Privilege::Machine;
     std::uint64_t pc;
     std::vector<std::uint64_t> gprs;
     std::array<std::uint64_t, 4096> csrs;

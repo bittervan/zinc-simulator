@@ -19,7 +19,7 @@ Commit Executor::step(Core &core, Memory &mem, const DecodedInsn &insn) {
         return write.type == "x" && write.num == 0;
     });
 
-    core.set_pc(result.next_pc);
+    core.set_pc(result.next_pc.value_or(core.get_pc() + 4));
     
     for (const RegWrite &reg_write : result.reg_writes) {
         if (reg_write.type == "x") {
@@ -70,18 +70,31 @@ Commit Executor::step(Core &core, Memory &mem, const DecodedInsn &insn) {
     return ret;
 }
 
-StepResult Executor::execute(const Core &core, const Memory &mem, const LuiInsn& insn) {
-    (void)core;
-    (void)mem;
-    (void)insn;
-    throw std::runtime_error(std::format("Execute for LUI is not implemented at {:08x}", core.get_pc()));
+StepResult Executor::execute(const Core &, const Memory &, const LuiInsn& insn) {
+    StepResult ret;
+    ret.reg_writes.push_back(
+        RegWrite{
+            .type = "x",
+            .num = insn.rd,
+            .value = static_cast<uint64_t>(insn.imm)
+        }
+    );
+    return ret;
 }
 
-StepResult Executor::execute(const Core &core, const Memory &mem, const AuipcInsn& insn) {
-    (void)core;
-    (void)mem;
-    (void)insn;
-    throw std::runtime_error(std::format("Execute for AUIPC is not implemented at {:08x}", core.get_pc()));
+StepResult Executor::execute(const Core &core, const Memory &, const AuipcInsn& insn) {
+    StepResult ret;
+    uint64_t result = core.get_pc() + insn.imm;
+
+    ret.reg_writes.push_back(
+        RegWrite{
+            .type = "x",
+            .num = insn.rd,
+            .value = result
+        }
+    );
+
+    return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory&, const JalInsn& insn) {
@@ -109,11 +122,49 @@ StepResult Executor::execute(const Core &core, const Memory &mem, const JalrInsn
     throw std::runtime_error(std::format("Execute for JALR is not implemented at {:08x}", core.get_pc()));
 }
 
-StepResult Executor::execute(const Core &core, const Memory &mem, const BranchInsn& insn) {
-    (void)core;
-    (void)mem;
-    (void)insn;
-    throw std::runtime_error(std::format("Execute for BRANCH is not implemented at {:08x}", core.get_pc()));
+StepResult Executor::execute(const Core &core, const Memory &, const BranchInsn& insn) {
+    StepResult ret;
+    bool should_branch = false;
+    std::uint64_t rs1_val = core.get_gpr(insn.rs1);
+    std::uint64_t rs2_val = core.get_gpr(insn.rs2);
+
+    switch (insn.type) {
+        case BranchType::Eq: {
+            should_branch = rs1_val == rs2_val;
+            break;
+        }
+        case BranchType::Ge: {
+            should_branch = static_cast<std::int64_t>(rs1_val) >= static_cast<std::int64_t>(rs2_val);
+            break;
+        }
+        case BranchType::Geu: {
+            should_branch = rs1_val >= rs2_val;
+            break;
+        }
+        case BranchType::Lt: {
+            should_branch = static_cast<std::int64_t>(rs1_val) < static_cast<std::int64_t>(rs2_val);
+            break;
+        }
+        case BranchType::Ltu: {
+            should_branch = rs1_val < rs2_val;
+            break;
+        }
+        case BranchType::Ne: {
+            should_branch = rs1_val != rs2_val;
+            break;
+        }
+        default: {
+            throw std::runtime_error(
+                std::format("Not a valid BranchType for Branch instruction: {:08x}: {:010b}", core.get_pc(),static_cast<std::uint32_t>(insn.type))
+            );
+        }
+    }
+
+    if (should_branch) {
+        ret.next_pc = core.get_pc() + insn.imm;
+    }
+
+    return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory &mem, const LoadInsn& insn) {
@@ -132,9 +183,10 @@ StepResult Executor::execute(const Core &core, const Memory &mem, const StoreIns
 
 StepResult Executor::execute(const Core &core, const Memory &, const OpImmInsn& insn) {
     StepResult ret;
-    std::int64_t imm_val = insn.imm;
-    std::int64_t rs1_val = core.get_gpr(insn.rs1);
-    std::int64_t rd_val = 0;
+    std::uint64_t imm_val = insn.imm;
+    std::uint64_t rs1_val = core.get_gpr(insn.rs1);
+    std::uint64_t rd_val = 0;
+    std::uint32_t shamt = insn.imm & 0x3f;
 
     switch (insn.type) {
         case OpType::Add: {
@@ -142,7 +194,7 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpImmInsn& 
             break;
         }
         case OpType::Slt: {
-            if (rs1_val < imm_val) {
+            if (static_cast<std::int64_t>(rs1_val) < static_cast<std::int64_t>(imm_val)) {
                 rd_val = 1;
             } else {
                 rd_val = 0;
@@ -150,7 +202,7 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpImmInsn& 
             break;
         }
         case OpType::Sltu: {
-            if (static_cast<std::uint64_t>(rs1_val) < static_cast<std::uint64_t>(imm_val)) {
+            if (rs1_val < imm_val) {
                 rd_val = 1;
             } else {
                 rd_val = 0;
@@ -165,16 +217,20 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpImmInsn& 
             rd_val = rs1_val | imm_val;
             break;
         }
+        case OpType::And: {
+            rd_val = rs1_val & imm_val;
+            break;
+        }
         case OpType::Sll: {
-            rd_val = rs1_val << imm_val;
+            rd_val = rs1_val << shamt;
             break;
         }
         case OpType::Srl: {
-            rd_val = static_cast<std::uint64_t>(rs1_val) >> imm_val;
+            rd_val = rs1_val >> shamt;
             break;
         }
         case OpType::Sra: {
-            rd_val = rs1_val >> imm_val;
+            rd_val = static_cast<int64_t>(rs1_val) >> shamt;
             break;
         }
         default: {
@@ -188,11 +244,9 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpImmInsn& 
         RegWrite{
             .type = "x",
             .num = insn.rd,
-            .value = static_cast<uint64_t>(rd_val),
+            .value = rd_val,
         }
     );
-
-    ret.next_pc = core.get_pc() + 4;
 
     return ret;
 }
@@ -215,9 +269,9 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
     StepResult ret;
     switch (insn.type) {
         case SystemInsnType::Csrrs: {
-            uint64_t value = core.get_gpr(insn.rs1);
-            uint64_t old_csr_val = core.get_csr(insn.csr);
-            uint64_t new_csr_val = old_csr_val | value;
+            std::uint64_t value = core.get_gpr(insn.rs1);
+            std::uint64_t old_csr_val = core.get_csr(insn.csr);
+            std::uint64_t new_csr_val = old_csr_val | value;
             
             ret.reg_writes.push_back(
                 RegWrite{
@@ -239,22 +293,108 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
 
             break;
         }
+        case SystemInsnType::Csrrw: {
+            std::uint64_t old_csr_val = core.get_csr(insn.csr);
+            std::uint64_t new_csr_val = core.get_gpr(insn.rs1);
+            
+            ret.reg_writes.push_back(
+                RegWrite{
+                    .type = "x",
+                    .num = insn.rd,
+                    .value = old_csr_val
+                }
+            );
+
+            ret.reg_writes.push_back(
+                RegWrite{
+                    .type = "csr",
+                    .num = insn.csr,
+                    .value = new_csr_val
+                }
+            );
+
+            break;
+        }
+        case SystemInsnType::Csrrwi: {
+            std::uint64_t old_csr_val = core.get_csr(insn.csr);
+            std::uint64_t new_csr_val = core.get_gpr(insn.uimm);
+            
+            ret.reg_writes.push_back(
+                RegWrite{
+                    .type = "x",
+                    .num = insn.rd,
+                    .value = old_csr_val
+                }
+            );
+
+            if (new_csr_val) {
+                ret.reg_writes.push_back(
+                    RegWrite{
+                        .type = "csr",
+                        .num = insn.csr,
+                        .value = new_csr_val
+                    }
+                );
+            }
+
+            break;
+        }
+
+        case SystemInsnType::Mret: {
+
+        }
         default: {
             throw std::runtime_error(
-                std::format("Unimplemented System Instruction: {:03b}", static_cast<uint32_t>(insn.type))
+                std::format("Unimplemented System Instruction: {:015b} at {:08x}", static_cast<uint32_t>(insn.type), core.get_pc())
             );
         }
     }
 
-    ret.next_pc = core.get_pc() + 4;
     return ret;
 }
 
-StepResult Executor::execute(const Core &core, const Memory &mem, const OpImm32Insn& insn) {
-    (void)core;
-    (void)mem;
-    (void)insn;
-    throw std::runtime_error(std::format("Execute for OP-IMM-32 is not implemented at {:08x}", core.get_pc()));
+StepResult Executor::execute(const Core &core, const Memory &, const OpImm32Insn& insn) {
+
+    StepResult ret;
+    std::uint32_t imm_val = insn.imm;
+    std::uint32_t rs1_val = core.get_gpr(insn.rs1);
+    std::uint32_t rd_val = 0;
+    std::uint32_t shamt = static_cast<std::uint32_t>(insn.imm) & 0x1f;
+
+
+    switch (insn.type) {
+        case OpType::Add: {
+            rd_val = imm_val + rs1_val;
+            break;
+        }
+        case OpType::Sll: {
+            rd_val = rs1_val << shamt;
+            break;
+        }
+        case OpType::Srl: {
+            rd_val = rs1_val >> shamt;
+            break;
+        }
+        case OpType::Sra: {
+            rd_val = static_cast<std::uint32_t>(static_cast<std::int32_t>(rs1_val) >> shamt);
+            break;
+        }
+        default: {
+            throw std::runtime_error(
+                std::format("Not a valid OpType for OpImm32 instruction: {:08x}: {:010b}", core.get_pc(),static_cast<std::uint32_t>(insn.type))
+            );
+        }
+    }
+
+    ret.reg_writes.push_back(
+        RegWrite{
+            .type = "x",
+            .num = insn.rd,
+            .value = static_cast<std::uint64_t>(static_cast<std::int64_t>(static_cast<std::int32_t>(rd_val))),
+        }
+    );
+
+    return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory &mem, const Op32Insn& insn) {

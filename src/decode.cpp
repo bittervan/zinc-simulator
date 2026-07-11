@@ -106,11 +106,7 @@ DecodedInsn Decoder::decode(std::uint32_t insn) {
             uint32_t csr = get_zicsr_csr(insn);
 
             if (!funct3) {
-                if (csr) {
-                    type = SystemInsnType::Ebreak;
-                } else {
-                    type = SystemInsnType::Ecall;
-                }
+                type = static_cast<SystemInsnType>(get_i_type_imm(insn) << 3 | funct3);
             } else {
                 type = static_cast<SystemInsnType>(funct3);
             }
@@ -129,7 +125,7 @@ DecodedInsn Decoder::decode(std::uint32_t insn) {
             uint32_t funct3 = get_funct3(insn);
             int64_t imm;
             if (funct3 == 0b101 || funct3 == 0b001) {
-                type = static_cast<OpType>(get_funct7(insn) << 3 | funct3);
+                type = static_cast<OpType>(get_i_type_imm(insn) >> 7 | funct3);
                 imm = get_shamt(insn);
             } else {
                 type = static_cast<OpType>(funct3);

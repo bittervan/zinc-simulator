@@ -24,27 +24,28 @@ enum class MemAccessType : std::uint32_t {
 };
 
 enum class OpType : std::uint32_t {
-    Add    = 0b0000000'000,
-    Sub    = 0b0100000'000,
-    Sll    = 0b0000000'001,
-    Slt    = 0b0000000'010,
-    Sltu   = 0b0000000'011,
-    Xor    = 0b0000000'100,
-    Srl    = 0b0000000'101,
-    Sra    = 0b0100000'101,
-    Or     = 0b0000000'110,
-    And    = 0b0000000'111,
+    Add    = 0b00'000,
+    Sub    = 0b01'000,
+    Sll    = 0b00'001,
+    Slt    = 0b00'010,
+    Sltu   = 0b00'011,
+    Xor    = 0b00'100,
+    Srl    = 0b00'101,
+    Sra    = 0b01'101,
+    Or     = 0b00'110,
+    And    = 0b00'111,
 };
 
 enum class SystemInsnType {
-    Ecall =     0b000,
+    Ecall =     0b000000000000'000,
+    Ebreak =    0b000000000001'000,
     Csrrw =     0b001,
     Csrrs =     0b010,
     Csrrc =     0b011,
-    Ebreak =    0b100,
     Csrrwi =    0b101,
     Csrrsi =    0b110,
     Csrrci =    0b111,
+    Mret =      0b001100000010'000,
 };
 
 enum class MiscMemInsnType {

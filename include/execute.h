@@ -3,9 +3,11 @@
 #include <decode.h>
 #include <cpu.h>
 #include <memory.h>
+#include <optional>
 
 struct StepResult {
-    std::uint64_t next_pc;
+    std::optional<std::uint64_t> next_pc;       // Default value will be pc + 4
+    std::optional<Privilege> next_privilege;    // Default value, will be current privilege
     std::vector<RegWrite> reg_writes;
     std::vector<MemAccess> mem_reads;
     std::vector<MemAccess> mem_writes;
