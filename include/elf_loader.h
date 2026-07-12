@@ -14,6 +14,7 @@ public:
 class ElfImage {
 public:
     std::uint64_t entry;
+    std::uint64_t tohost;
     std::vector<ElfSegment> segments;
 };
 

@@ -40,15 +40,19 @@ int main(int argc, char *argv[]) {
             );
         }
 
-        if (const SystemInsn *sys_insn = std::get_if<SystemInsn>(&decoded)) {
-            if (sys_insn->type == SystemInsnType::Ecall) {
-                break;
-            }
-        }
+        // if (const SystemInsn *sys_insn = std::get_if<SystemInsn>(&decoded)) {
+        //     if (sys_insn->type == SystemInsnType::Ecall) {
+        //         break;
+        //     }
+        // }
 
         Commit step_commit = Executor::step(core, mem, decoded);
 
         std::cout << step_commit.to_string() << std::endl;
+
+        if (mem.get_64(image.tohost)) {
+            break;
+        }
     }
 
     return 0;

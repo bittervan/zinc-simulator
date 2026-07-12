@@ -24,16 +24,16 @@ enum class MemAccessType : std::uint32_t {
 };
 
 enum class OpType : std::uint32_t {
-    Add    = 0b00'000,
-    Sub    = 0b01'000,
-    Sll    = 0b00'001,
-    Slt    = 0b00'010,
-    Sltu   = 0b00'011,
-    Xor    = 0b00'100,
-    Srl    = 0b00'101,
-    Sra    = 0b01'101,
-    Or     = 0b00'110,
-    And    = 0b00'111,
+    Add  = 0b0000000'000,
+    Sub  = 0b0100000'000,
+    Sll  = 0b0000000'001,
+    Slt  = 0b0000000'010,
+    Sltu = 0b0000000'011,
+    Xor  = 0b0000000'100,
+    Srl  = 0b0000000'101,
+    Sra  = 0b0100000'101,
+    Or   = 0b0000000'110,
+    And  = 0b0000000'111,
 };
 
 enum class SystemInsnType {
@@ -51,22 +51,6 @@ enum class SystemInsnType {
 enum class MiscMemInsnType {
     Fence =     0b000,
     FenceI =    0b001,
-};
-
-enum class Csr : std::uint32_t {
-    Satp     = 0x180,
-    Mstatus  = 0x300,
-    Medeleg  = 0x302,
-    Mideleg  = 0x303,
-    Mie      = 0x304,
-    Mtvec    = 0x305,
-    Mscratch = 0x340,
-    Mepc     = 0x341,
-    Mcause   = 0x342,
-    Mtval    = 0x343,
-    Pmpcfg0  = 0x3a0,
-    Pmpaddr0 = 0x3b0,
-    Mhartid  = 0xf14,
 };
 
 struct LuiInsn {

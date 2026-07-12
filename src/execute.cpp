@@ -13,22 +13,24 @@ Commit Executor::step(Core &core, Memory &mem, const DecodedInsn &insn) {
 
     std::uint64_t pc = core.get_pc();
     std::uint32_t raw_insn = mem.get_32(pc);
+    Privilege current_priv = core.get_priv();
 
     // Drop x0 write.
     std::erase_if(result.reg_writes, [](const RegWrite &write) {
-        return write.type == "x" && write.num == 0;
+        return write.type == RegType::X && write.num == 0;
     });
 
     core.set_pc(result.next_pc.value_or(core.get_pc() + 4));
+    core.set_priv(result.next_privilege.value_or(core.get_priv()));
     
     for (const RegWrite &reg_write : result.reg_writes) {
-        if (reg_write.type == "x") {
+        if (reg_write.type == RegType::X) {
             core.set_gpr(reg_write.num, reg_write.value);
-        } else if (reg_write.type == "csr") {
-            core.set_csr(reg_write.num, reg_write.value);
+        } else if (reg_write.type == RegType::Csr) {
+            core.set_csr(static_cast<Csr>(reg_write.num), reg_write.value);
         } else {
             throw std::runtime_error(
-                std::format("Unrecognized RegWrite type {}", reg_write.type)
+                std::format("Unrecognized RegWrite type {}", static_cast<uint32_t>(reg_write.type))
             );
         }
     }
@@ -62,6 +64,7 @@ Commit Executor::step(Core &core, Memory &mem, const DecodedInsn &insn) {
     Commit ret {
         .pc = pc,
         .insn = raw_insn,
+        .priv = current_priv,
         .reg_writes = std::move(result.reg_writes),
         .mem_reads = std::move(result.mem_reads),
         .mem_writes = std::move(result.mem_writes),
@@ -72,46 +75,21 @@ Commit Executor::step(Core &core, Memory &mem, const DecodedInsn &insn) {
 
 StepResult Executor::execute(const Core &, const Memory &, const LuiInsn& insn) {
     StepResult ret;
-    ret.reg_writes.push_back(
-        RegWrite{
-            .type = "x",
-            .num = insn.rd,
-            .value = static_cast<uint64_t>(insn.imm)
-        }
-    );
+    ret.reg_writes.emplace_back(RegType::X, insn.rd, static_cast<std::uint64_t>(insn.imm));
     return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory &, const AuipcInsn& insn) {
     StepResult ret;
     uint64_t result = core.get_pc() + insn.imm;
-
-    ret.reg_writes.push_back(
-        RegWrite{
-            .type = "x",
-            .num = insn.rd,
-            .value = result
-        }
-    );
-
+    ret.reg_writes.emplace_back(RegType::X, insn.rd, result);
     return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory&, const JalInsn& insn) {
     StepResult ret;
-    uint64_t new_pc = static_cast<int64_t>(core.get_pc()) + insn.imm;
-    uint64_t pc_plus_4 = core.get_pc() + 4;
-
-    ret.reg_writes.push_back(
-        RegWrite{
-            .type = "x",
-            .num = insn.rd,
-            .value = pc_plus_4,
-        }
-    );
-
-    ret.next_pc = new_pc;
-
+    ret.next_pc = static_cast<int64_t>(core.get_pc()) + insn.imm;
+    ret.reg_writes.emplace_back(RegType::X, insn.rd, core.get_pc() + 4);
     return ret;
 }
 
@@ -174,11 +152,46 @@ StepResult Executor::execute(const Core &core, const Memory &mem, const LoadInsn
     throw std::runtime_error(std::format("Execute for LOAD is not implemented at {:08x}", core.get_pc()));
 }
 
-StepResult Executor::execute(const Core &core, const Memory &mem, const StoreInsn& insn) {
-    (void)core;
-    (void)mem;
-    (void)insn;
-    throw std::runtime_error(std::format("Execute for STORE is not implemented at {:08x}", core.get_pc()));
+StepResult Executor::execute(const Core &core, const Memory &, const StoreInsn& insn) {
+    StepResult ret;
+
+    std::uint64_t addr = core.get_gpr(insn.rs1) + static_cast<uint64_t>(insn.imm);
+    std::uint64_t val = core.get_gpr(insn.rs2);
+    std::uint32_t size = 0;
+
+
+    switch (insn.type) {
+        case MemAccessType::B: {
+            val = val & 0xff;
+            size = 1;
+            break;
+        }
+        case MemAccessType::H: {
+            val = val & 0xffff;
+            size = 2;
+            break;
+        }
+        case MemAccessType::W: {
+            val = val & 0xffff'ffffULL;
+            size = 4;
+            break;
+        }
+        case MemAccessType::D: {
+            size = 8;
+            break;
+        }
+        default: {
+            throw std::runtime_error(
+                std::format(
+                    "Invalid STORE type at {:016x}: {:03b}", core.get_pc(), static_cast<std::uint32_t>(insn.type)
+                )
+            );
+        }
+    }
+
+    ret.mem_writes.emplace_back(addr, val, size);
+
+    return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory &, const OpImmInsn& insn) {
@@ -240,29 +253,103 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpImmInsn& 
         }
     }
 
-    ret.reg_writes.push_back(
-        RegWrite{
-            .type = "x",
-            .num = insn.rd,
-            .value = rd_val,
-        }
-    );
+    ret.reg_writes.emplace_back(RegType::X, insn.rd, rd_val);
 
     return ret;
 }
 
-StepResult Executor::execute(const Core &core, const Memory &mem, const OpInsn& insn) {
-    (void)core;
-    (void)mem;
-    (void)insn;
-    throw std::runtime_error(std::format("Execute for OP is not implemented at {:08x}", core.get_pc()));
+StepResult Executor::execute(const Core &core, const Memory &, const OpInsn& insn) {
+    StepResult ret;
+    std::uint64_t rs1_val = core.get_gpr(insn.rs1);
+    std::uint64_t rs2_val = core.get_gpr(insn.rs2);
+    std::uint64_t rd_val = 0;
+    std::uint32_t shamt = static_cast<std::uint32_t>(rs2_val & 0x3f);
+
+    switch (insn.type) {
+        case OpType::Add: {
+            rd_val = rs1_val + rs2_val;
+            break;
+        }
+        case OpType::Sub: {
+            rd_val = rs1_val - rs2_val;
+            break;
+        }
+        case OpType::Slt: {
+            if (static_cast<std::int64_t>(rs1_val) < static_cast<std::int64_t>(rs2_val)) {
+                rd_val = 1;
+            } else {
+                rd_val = 0;
+            }
+            break;
+        }
+        case OpType::Sltu: {
+            if (rs1_val < rs2_val) {
+                rd_val = 1;
+            } else {
+                rd_val = 0;
+            }
+            break;
+        }
+        case OpType::Xor: {
+            rd_val = rs1_val ^ rs2_val;
+            break;
+        }
+        case OpType::Or: {
+            rd_val = rs1_val | rs2_val;
+            break;
+        }
+        case OpType::And: {
+            rd_val = rs1_val & rs2_val;
+            break;
+        }
+        case OpType::Sll: {
+            rd_val = rs1_val << shamt;
+            break;
+        }
+        case OpType::Srl: {
+            rd_val = rs1_val >> shamt;
+            break;
+        }
+        case OpType::Sra: {
+            rd_val = static_cast<int64_t>(rs1_val) >> shamt;
+            break;
+        }
+        default: {
+            throw std::runtime_error(
+                std::format("Not a valid OpType for OpImm instruction: {:08x}: {:010b}", core.get_pc(),static_cast<std::uint32_t>(insn.type))
+            );
+        }
+    }
+
+    // ret.reg_writes.push_back(
+    //     RegWrite{
+    //         .type = "x",
+    //         .num = insn.rd,
+    //         .value = rd_val,
+    //     }
+    // );
+    ret.reg_writes.emplace_back(RegType::X, insn.rd, rd_val);
+
+    return ret;
+
 }
 
-StepResult Executor::execute(const Core &core, const Memory &mem, const MiscMemInsn& insn) {
-    (void)core;
-    (void)mem;
-    (void)insn;
-    throw std::runtime_error(std::format("Execute for MISC-MEM is not implemented at {:08x}", core.get_pc()));
+StepResult Executor::execute(const Core &core, const Memory &, const MiscMemInsn& insn) {
+    switch (insn.type) {
+        case MiscMemInsnType::Fence: {
+            break;
+        }
+        case MiscMemInsnType::FenceI: {
+            break;
+        }
+        default: {
+            throw std::runtime_error(
+                std::format("Unimplemented MiscMem Instruction: {:015b} at {:08x}", static_cast<uint32_t>(insn.type), core.get_pc())
+            );
+        }
+    }
+    StepResult ret;
+    return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn& insn) {
@@ -270,78 +357,106 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
     switch (insn.type) {
         case SystemInsnType::Csrrs: {
             std::uint64_t value = core.get_gpr(insn.rs1);
-            std::uint64_t old_csr_val = core.get_csr(insn.csr);
+            std::uint64_t old_csr_val = core.get_csr(static_cast<Csr>(insn.csr));
             std::uint64_t new_csr_val = old_csr_val | value;
             
-            ret.reg_writes.push_back(
-                RegWrite{
-                    .type = "x",
-                    .num = insn.rd,
-                    .value = old_csr_val
-                }
-            );
+            ret.reg_writes.emplace_back(RegType::X, insn.rd, old_csr_val);
 
             if (insn.rs1) {
-                ret.reg_writes.push_back(
-                    RegWrite{
-                        .type = "csr",
-                        .num = insn.csr,
-                        .value = new_csr_val
-                    }
-                );
+                ret.reg_writes.emplace_back(RegType::Csr, insn.csr, new_csr_val);
             }
 
             break;
         }
         case SystemInsnType::Csrrw: {
-            std::uint64_t old_csr_val = core.get_csr(insn.csr);
+            std::uint64_t old_csr_val = core.get_csr(static_cast<Csr>(insn.csr));
             std::uint64_t new_csr_val = core.get_gpr(insn.rs1);
             
-            ret.reg_writes.push_back(
-                RegWrite{
-                    .type = "x",
-                    .num = insn.rd,
-                    .value = old_csr_val
-                }
-            );
-
-            ret.reg_writes.push_back(
-                RegWrite{
-                    .type = "csr",
-                    .num = insn.csr,
-                    .value = new_csr_val
-                }
-            );
+            ret.reg_writes.emplace_back(RegType::X, insn.rd, old_csr_val);
+            ret.reg_writes.emplace_back(RegType::Csr, insn.csr, new_csr_val);
 
             break;
         }
         case SystemInsnType::Csrrwi: {
-            std::uint64_t old_csr_val = core.get_csr(insn.csr);
+            std::uint64_t old_csr_val = core.get_csr(static_cast<Csr>(insn.csr));
             std::uint64_t new_csr_val = core.get_gpr(insn.uimm);
             
-            ret.reg_writes.push_back(
-                RegWrite{
-                    .type = "x",
-                    .num = insn.rd,
-                    .value = old_csr_val
-                }
-            );
+            ret.reg_writes.emplace_back(RegType::X, insn.rd, old_csr_val);
 
             if (new_csr_val) {
-                ret.reg_writes.push_back(
-                    RegWrite{
-                        .type = "csr",
-                        .num = insn.csr,
-                        .value = new_csr_val
-                    }
-                );
+                ret.reg_writes.emplace_back(RegType::Csr, insn.csr, new_csr_val);
             }
 
             break;
         }
 
         case SystemInsnType::Mret: {
+            ret.next_pc = core.get_csr(Csr::Mepc);
 
+            std::uint64_t old_mstatus = core.get_csr(Csr::Mstatus);
+            std::uint64_t new_mstatus = old_mstatus;
+
+            std::uint64_t mpp = old_mstatus & MSTATUS_MPP_MASK >> 11;
+            if (old_mstatus & MSTATUS_MPIE_MASK) {
+                new_mstatus |= MSTATUS_MIE_MASK;
+            } else {
+                new_mstatus &= ~MSTATUS_MIE_MASK;
+            }
+
+            new_mstatus |= MSTATUS_MPIE_MASK;
+            new_mstatus &= ~MSTATUS_MPP_MASK;
+
+            Privilege next_privilege = static_cast<Privilege>(mpp);
+
+            if (next_privilege != Privilege::Machine) {
+                new_mstatus &= ~MSTATUS_MPRV_MASK;
+            }
+            
+            ret.next_privilege = static_cast<Privilege>(mpp);
+
+            ret.reg_writes.emplace_back(Csr::Mstatus, new_mstatus);
+
+            break;
+        }
+        case SystemInsnType::Ecall: {
+            std::uint64_t cause;
+            switch (core.get_priv()) {
+                case Privilege::User: {
+                    cause = 8;
+                    break;
+                }
+                case Privilege::Supervisor: {
+                    throw std::runtime_error("We have not implemented S mode");
+                }
+                case Privilege::Machine: {
+                    cause = 11;
+                    break;
+                }
+                default: {
+                    throw std::runtime_error(
+                        std::format("Ecall at unknown priviledge {}", static_cast<uint32_t>(core.get_priv()))
+                    );
+                }
+            }
+
+            std::uint64_t mstatus = core.get_csr(Csr::Mstatus);
+            if ((mstatus & MSTATUS_MIE_MASK) != 0) {
+                mstatus |= MSTATUS_MPIE_MASK;
+            } else {
+                mstatus &= ~MSTATUS_MPIE_MASK;
+            }
+
+            mstatus &= ~MSTATUS_MIE_MASK;
+            mstatus &= ~MSTATUS_MPIE_MASK;
+            mstatus |= static_cast<std::uint64_t>(core.get_priv()) << 11;
+
+            ret.reg_writes.emplace_back(Csr::Mcause, cause);
+            ret.reg_writes.emplace_back(Csr::Mtval, 0);
+            ret.reg_writes.emplace_back(Csr::Mepc, core.get_pc());
+            ret.reg_writes.emplace_back(Csr::Mstatus, mstatus);
+            ret.next_pc = core.get_csr(Csr::Mtvec) & ~0b11UL;
+            ret.next_privilege = Privilege::Machine;
+            break;
         }
         default: {
             throw std::runtime_error(
@@ -360,7 +475,6 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpImm32Insn
     std::uint32_t rs1_val = core.get_gpr(insn.rs1);
     std::uint32_t rd_val = 0;
     std::uint32_t shamt = static_cast<std::uint32_t>(insn.imm) & 0x1f;
-
 
     switch (insn.type) {
         case OpType::Add: {
@@ -386,14 +500,9 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpImm32Insn
         }
     }
 
-    ret.reg_writes.push_back(
-        RegWrite{
-            .type = "x",
-            .num = insn.rd,
-            .value = static_cast<std::uint64_t>(static_cast<std::int64_t>(static_cast<std::int32_t>(rd_val))),
-        }
-    );
+    std::uint64_t new_val = static_cast<std::uint64_t>(static_cast<std::int64_t>(static_cast<std::int32_t>(rd_val)));
 
+    ret.reg_writes.emplace_back(RegType::X, insn.rd, new_val);
     return ret;
 }
 

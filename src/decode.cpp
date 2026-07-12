@@ -51,7 +51,7 @@ static inline std::uint32_t get_funct7(std::uint32_t insn) {
 }
 
 static inline std::uint32_t get_shamt(std::uint32_t insn) {
-    return 0x1f & (insn >> 20);
+    return 0x3f & (insn >> 20);
 }
 
 static inline std::uint32_t get_rs2(std::uint32_t insn) {
@@ -125,8 +125,8 @@ DecodedInsn Decoder::decode(std::uint32_t insn) {
             uint32_t funct3 = get_funct3(insn);
             int64_t imm;
             if (funct3 == 0b101 || funct3 == 0b001) {
-                type = static_cast<OpType>(get_i_type_imm(insn) >> 7 | funct3);
-                imm = get_shamt(insn);
+                type = static_cast<OpType>((((insn >> 26) & 0x3f) << 4) | funct3);
+                imm = (insn >> 20) & 0x3f;
             } else {
                 type = static_cast<OpType>(funct3);
                 imm = get_i_type_imm(insn);
@@ -190,7 +190,7 @@ DecodedInsn Decoder::decode(std::uint32_t insn) {
             OpType type;
             uint32_t funct3 = get_funct3(insn);
             int64_t imm;
-            if (funct3 == 0b101) {
+            if (funct3 == 0b101 || funct3 == 0b001) {
                 type = static_cast<OpType>(get_funct7(insn) << 3 | funct3);
                 imm = get_shamt(insn);
             } else {
