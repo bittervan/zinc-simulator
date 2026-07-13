@@ -39,6 +39,12 @@ enum class Privilege : std::uint32_t {
     Machine    = 0b11,
 };
 
+class Exception {
+public:
+    std::uint64_t mcause;
+    std::uint64_t mtval;
+};
+
 class RegWrite {
 public:
     RegType type;

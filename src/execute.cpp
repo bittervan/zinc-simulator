@@ -14,61 +14,86 @@ Commit Executor::step(Core &core, Memory &mem, const DecodedInsn &insn) {
     std::uint64_t pc = core.get_pc();
     std::uint32_t raw_insn = mem.get_32(pc);
     Privilege current_priv = core.get_priv();
+    Commit ret;
 
     // Drop x0 write.
     std::erase_if(result.reg_writes, [](const RegWrite &write) {
         return write.type == RegType::X && write.num == 0;
     });
 
-    core.set_pc(result.next_pc.value_or(core.get_pc() + 4));
-    core.set_priv(result.next_privilege.value_or(core.get_priv()));
-    
-    for (const RegWrite &reg_write : result.reg_writes) {
-        if (reg_write.type == RegType::X) {
-            core.set_gpr(reg_write.num, reg_write.value);
-        } else if (reg_write.type == RegType::Csr) {
-            core.set_csr(static_cast<Csr>(reg_write.num), reg_write.value);
-        } else {
-            throw std::runtime_error(
-                std::format("Unrecognized RegWrite type {}", static_cast<uint32_t>(reg_write.type))
-            );
-        }
-    }
+    if (result.exception) {
+        std::uint64_t mcause = result.exception->mcause;
+        std::uint64_t mtval = result.exception->mtval;
 
-    for (const MemAccess &mem_write : result.mem_writes) {
-        switch (mem_write.size) {
-            case 1: {
-                mem.set_8(mem_write.addr, mem_write.value);
-                break;
-            }
-            case 2: {
-                mem.set_16(mem_write.addr, mem_write.value);
-                break;
-            }
-            case 4: {
-                mem.set_32(mem_write.addr, mem_write.value);
-                break;
-            }
-            case 8: {
-                mem.set_64(mem_write.addr, mem_write.value);
-                break;
-            }
-            default: {
+        std::uint64_t mstatus = core.get_csr(Csr::Mstatus);
+        if ((mstatus & MSTATUS_MIE_MASK) != 0) {
+            mstatus |= MSTATUS_MPIE_MASK;
+        } else {
+            mstatus &= ~MSTATUS_MPIE_MASK;
+        }
+
+        mstatus &= ~MSTATUS_MIE_MASK;
+        mstatus &= ~MSTATUS_MPP_MASK;
+        mstatus |= static_cast<std::uint64_t>(core.get_priv()) << 11;
+
+        ret.reg_writes.emplace_back(Csr::Mcause, mcause);
+        ret.reg_writes.emplace_back(Csr::Mtval, mtval);
+        ret.reg_writes.emplace_back(Csr::Mepc, core.get_pc());
+        ret.reg_writes.emplace_back(Csr::Mstatus, mstatus);
+
+        core.set_pc(core.get_csr(Csr::Mtvec) & ~0b11UL);
+        core.set_priv(Privilege::Machine);
+    } else {
+        core.set_pc(result.next_pc.value_or(core.get_pc() + 4));
+        core.set_priv(result.next_privilege.value_or(core.get_priv()));
+        
+        for (const RegWrite &reg_write : result.reg_writes) {
+            if (reg_write.type == RegType::X) {
+                core.set_gpr(reg_write.num, reg_write.value);
+            } else if (reg_write.type == RegType::Csr) {
+                core.set_csr(static_cast<Csr>(reg_write.num), reg_write.value);
+            } else {
                 throw std::runtime_error(
-                    std::format("Unsupported memory write size: {}", mem_write.size)
+                    std::format("Unrecognized RegWrite type {}", static_cast<uint32_t>(reg_write.type))
                 );
             }
         }
-    }
 
-    Commit ret {
-        .pc = pc,
-        .insn = raw_insn,
-        .priv = current_priv,
-        .reg_writes = std::move(result.reg_writes),
-        .mem_reads = std::move(result.mem_reads),
-        .mem_writes = std::move(result.mem_writes),
-    };
+        for (const MemAccess &mem_write : result.mem_writes) {
+            switch (mem_write.size) {
+                case 1: {
+                    mem.set_8(mem_write.addr, mem_write.value);
+                    break;
+                }
+                case 2: {
+                    mem.set_16(mem_write.addr, mem_write.value);
+                    break;
+                }
+                case 4: {
+                    mem.set_32(mem_write.addr, mem_write.value);
+                    break;
+                }
+                case 8: {
+                    mem.set_64(mem_write.addr, mem_write.value);
+                    break;
+                }
+                default: {
+                    throw std::runtime_error(
+                        std::format("Unsupported memory write size: {}", mem_write.size)
+                    );
+                }
+            }
+        }
+
+        ret = Commit{
+            .pc = pc,
+            .insn = raw_insn,
+            .priv = current_priv,
+            .reg_writes = std::move(result.reg_writes),
+            .mem_reads = std::move(result.mem_reads),
+            .mem_writes = std::move(result.mem_writes),
+        };
+    }
 
     return ret;
 }
@@ -439,23 +464,10 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
                 }
             }
 
-            std::uint64_t mstatus = core.get_csr(Csr::Mstatus);
-            if ((mstatus & MSTATUS_MIE_MASK) != 0) {
-                mstatus |= MSTATUS_MPIE_MASK;
-            } else {
-                mstatus &= ~MSTATUS_MPIE_MASK;
-            }
-
-            mstatus &= ~MSTATUS_MIE_MASK;
-            mstatus &= ~MSTATUS_MPIE_MASK;
-            mstatus |= static_cast<std::uint64_t>(core.get_priv()) << 11;
-
-            ret.reg_writes.emplace_back(Csr::Mcause, cause);
-            ret.reg_writes.emplace_back(Csr::Mtval, 0);
-            ret.reg_writes.emplace_back(Csr::Mepc, core.get_pc());
-            ret.reg_writes.emplace_back(Csr::Mstatus, mstatus);
-            ret.next_pc = core.get_csr(Csr::Mtvec) & ~0b11UL;
-            ret.next_privilege = Privilege::Machine;
+            ret.exception = Exception {
+                .mcause = cause,
+                .mtval = 0, 
+            };
             break;
         }
         default: {

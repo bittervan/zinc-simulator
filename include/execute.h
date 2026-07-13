@@ -6,6 +6,7 @@
 #include <optional>
 
 struct StepResult {
+    std::optional<Exception> exception;
     std::optional<std::uint64_t> next_pc;       // Default value will be pc + 4
     std::optional<Privilege> next_privilege;    // Default value, will be current privilege
     std::vector<RegWrite> reg_writes;
