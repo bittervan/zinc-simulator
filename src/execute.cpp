@@ -103,11 +103,11 @@ StepResult Executor::execute(const Core &core, const Memory&, const JalInsn& ins
     return ret;
 }
 
-StepResult Executor::execute(const Core &core, const Memory &mem, const JalrInsn& insn) {
-    (void)core;
-    (void)mem;
-    (void)insn;
-    throw std::runtime_error(std::format("Execute for JALR is not implemented at {:08x}", core.get_pc()));
+StepResult Executor::execute(const Core &core, const Memory &, const JalrInsn& insn) {
+    NormalStep ret;
+    ret.next_pc = core.get_gpr(insn.rs1) + insn.imm;
+    ret.reg_writes.emplace_back(RegType::X, insn.rd, core.get_pc() + 4);
+    return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory &, const BranchInsn& insn) {
@@ -155,11 +155,95 @@ StepResult Executor::execute(const Core &core, const Memory &, const BranchInsn&
     return ret;
 }
 
+bool mem_access_aligned(uint64_t addr, MemAccessType type) {
+    switch (type) {
+        case MemAccessType::B :
+        case MemAccessType::Bu :
+            return true;
+        case MemAccessType::H:
+        case MemAccessType::Hu:
+            if (addr % 2 == 0) {
+                return true;
+            } else {
+                return false;
+            }
+        case MemAccessType::W:
+        case MemAccessType::Wu:
+            if (addr % 4 == 0) {
+                return true;
+            } else {
+                return false;
+            }
+        case MemAccessType::D:
+            if (addr % 8 == 0) {
+                return true;
+            } else {
+                return false;
+            }
+        default:
+            throw std::runtime_error("Not a valid memory access type");
+    }
+}
+
 StepResult Executor::execute(const Core &core, const Memory &mem, const LoadInsn& insn) {
-    (void)core;
-    (void)mem;
-    (void)insn;
-    throw std::runtime_error(std::format("Execute for LOAD is not implemented at {:08x}", core.get_pc()));
+    NormalStep ret;
+    std::uint64_t addr = core.get_gpr(insn.rs1) + insn.imm;
+    std::uint64_t data;
+
+    if (!mem_access_aligned(addr, insn.type)) {
+        return Exception {
+            .mcause = 4,
+            .mtval = addr,
+        };
+    }
+    
+    switch (insn.type) {
+        case MemAccessType::B : {
+            std::int8_t raw = mem.get_8(addr);
+            data = static_cast<std::int64_t>(raw);
+            ret.mem_reads.emplace_back(addr, data, 1);
+            break;
+        }
+        case MemAccessType::Bu : {
+            std::uint8_t raw = mem.get_8(addr);
+            data = static_cast<std::uint64_t>(raw);
+            ret.mem_reads.emplace_back(addr, data, 1);
+            break;
+        }
+        case MemAccessType::H : {
+            std::int16_t raw = mem.get_16(addr);
+            data = static_cast<std::int64_t>(raw);
+            ret.mem_reads.emplace_back(addr, data, 2);
+            break;
+        }
+        case MemAccessType::Hu : {
+            std::uint16_t raw = mem.get_16(addr);
+            data = static_cast<std::uint64_t>(raw);
+            ret.mem_reads.emplace_back(addr, data, 2);
+            break;
+        }
+        case MemAccessType::W : {
+            std::int32_t raw = mem.get_32(addr);
+            data = static_cast<std::int64_t>(raw);
+            ret.mem_reads.emplace_back(addr, data, 4);
+            break;
+        }
+        case MemAccessType::Wu : {
+            std::uint32_t raw = mem.get_32(addr);
+            data = static_cast<std::uint64_t>(raw);
+            ret.mem_reads.emplace_back(addr, data, 4);
+            break;
+        }
+        case MemAccessType::D : {
+            data = mem.get_64(addr);
+            ret.mem_reads.emplace_back(addr, data, 8);           
+            break;
+        }
+    }
+
+    ret.reg_writes.emplace_back(RegType::X, insn.rd, data);
+
+    return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory &, const StoreInsn& insn) {
@@ -169,6 +253,12 @@ StepResult Executor::execute(const Core &core, const Memory &, const StoreInsn& 
     std::uint64_t val = core.get_gpr(insn.rs2);
     std::uint32_t size = 0;
 
+    if (!mem_access_aligned(addr, insn.type)) {
+        return Exception {
+            .mcause = 6,
+            .mtval = addr,
+        };
+    }
 
     switch (insn.type) {
         case MemAccessType::B: {
@@ -520,11 +610,45 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpImm32Insn
     return ret;
 }
 
-StepResult Executor::execute(const Core &core, const Memory &mem, const Op32Insn& insn) {
-    (void)core;
-    (void)mem;
-    (void)insn;
-    throw std::runtime_error(std::format("Execute for OP-32 is not implemented at {:08x}", core.get_pc()));
+StepResult Executor::execute(const Core &core, const Memory &, const Op32Insn& insn) {
+    NormalStep ret;
+    std::uint32_t rs1_val = core.get_gpr(insn.rs1);
+    std::uint32_t rs2_val = core.get_gpr(insn.rs2);
+    std::int32_t rd_val = 0;
+    std::uint32_t shamt = static_cast<std::uint32_t>(rs2_val) & 0x3f;
+
+    switch (insn.type) {
+        case OpType::Add: {
+            rd_val = rs1_val + rs2_val;
+            break;
+        }
+        case OpType::Sub: {
+            rd_val = rs1_val - rs2_val;
+            break;
+        }
+        case OpType::Sll: {
+            rd_val = rs1_val << shamt;
+            break;
+        }
+        case OpType::Srl: {
+            rd_val = rs1_val >> shamt;
+            break;
+        }
+        case OpType::Sra: {
+            rd_val = static_cast<std::int32_t>(rs1_val) >> shamt;
+            break;
+        }
+        default: {
+            throw std::runtime_error(
+                std::format("Not a valid OpType for OpImm32 instruction: {:08x}: {:010b}", core.get_pc(),static_cast<std::uint32_t>(insn.type))
+            );
+        }
+    }
+
+    std::uint64_t new_val = static_cast<std::uint64_t>(static_cast<std::int64_t>(rd_val));
+
+    ret.reg_writes.emplace_back(RegType::X, insn.rd, new_val);
+    return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory &mem, const InvalidInsn& insn) {

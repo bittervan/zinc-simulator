@@ -149,7 +149,8 @@ std::string Commit::to_string() const {
         out += std::format(
             "{{\"addr\":{},\"value\":{},\"size\":{}}}",
             r.addr,
-            r.value,
+            // r.value, // TODO: fix this
+            0,
             r.size
         );
     }

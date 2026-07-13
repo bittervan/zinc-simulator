@@ -232,6 +232,15 @@ DecodedInsn Decoder::decode(std::uint32_t insn) {
             };
             break;
         }
+        case OPCODE_OP_32: {
+            ret = Op32Insn {
+                .type = static_cast<OpType>(get_funct7(insn) << 3 | get_funct3(insn)),
+                .rs1 = get_rs1(insn),
+                .rs2 = get_rs2(insn),
+                .rd = get_rd(insn)
+            };
+            break;
+        }
     }
     return ret;
 }

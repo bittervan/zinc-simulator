@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <variant>
 
 class Memory {
 public:
