@@ -7,11 +7,13 @@
 
 RegWrite::RegWrite(RegType type, std::uint32_t num, std::uint64_t value) : type(type), num(num), value(value) {}
 
-RegWrite::RegWrite(Csr csr, std::uint64_t value) : type(RegType::Csr), num(static_cast<std::uint32_t>(csr)), value(value) {}
+// RegWrite::RegWrite(Csr csr, std::uint64_t value) : type(RegType::Csr), num(static_cast<std::uint32_t>(csr)), value(value) {}
 
 MemAccess::MemAccess(std::uint64_t addr, std::uint64_t value, std::uint32_t size) : addr(addr), value(value), size(size) {}
 
-Core::Core(std::uint64_t init_pc) : pc(init_pc), gprs(NUM_GPRS, 0) {}
+Core::Core(std::uint64_t init_pc) : pc(init_pc), gprs(NUM_GPRS, 0) {
+    this->csrs[static_cast<std::uint32_t>(Csr::Mstatus)] = MSTATUS_UXL_RV64;
+}
 
 std::uint64_t Core::get_pc() const {
     return this->pc;
@@ -34,8 +36,51 @@ std::uint64_t Core::get_csr(Csr csr) const {
     return this->csrs[static_cast<std::uint32_t>(csr)];
 }
 
-void Core::set_csr(Csr csr, std::uint64_t value) {
-    this->csrs[static_cast<std::uint32_t>(csr)] = value;
+std::uint64_t Core::set_csr(Csr csr, std::uint64_t value) {
+    const std::uint32_t index = static_cast<std::uint32_t>(csr);
+
+      switch (csr) {
+          case Csr::Mstatus: {
+            csrs[index] = (csrs[index] & ~(MSTATUS_WRITABLE_MASK)) | (value & MSTATUS_WRITABLE_MASK);
+            break;
+        }
+
+        case Csr::Mepc: {
+            csrs[index] = value & ~0b11ULL;
+            break;
+        }
+
+        case Csr::Mtvec: {
+            csrs[index] = value & ~0b11ULL;
+            break;
+        }
+
+        case Csr::Pmpcfg0:
+        case Csr::Pmpaddr0:
+        case Csr::Mie:
+        case Csr::Mscratch:
+        case Csr::Mcause:
+        case Csr::Mtval:
+            csrs[index] = value;
+            break;
+
+        case Csr::Mhartid: {
+            throw std::logic_error(
+                "attempted to write read-only mhartid"
+            );
+        }
+
+        default: {
+            throw std::logic_error(
+                std::format(
+                    "attempted to write unsupported CSR 0x{:03x}",
+                    index
+                )
+            );
+        }
+    }
+
+    return csrs[index];
 }
 
 Privilege Core::get_priv() const {
@@ -127,4 +172,47 @@ std::string Commit::to_string() const {
     out += "]}";
 
     return out;
+}
+
+void Core::take_exception(const Exception& exception) {
+    std::uint64_t mcause = exception.mcause;
+    std::uint64_t mtval = exception.mtval;
+
+    std::uint64_t mstatus = this->get_csr(Csr::Mstatus);
+    if ((mstatus & MSTATUS_MIE_MASK) != 0) {
+        mstatus |= MSTATUS_MPIE_MASK;
+    } else {
+        mstatus &= ~MSTATUS_MPIE_MASK;
+    }
+
+    mstatus &= ~MSTATUS_MIE_MASK;
+    mstatus &= ~MSTATUS_MPP_MASK;
+    mstatus |= static_cast<std::uint64_t>(this->get_priv()) << 11;
+
+    this->set_csr(Csr::Mcause, mcause);
+    this->set_csr(Csr::Mtval, mtval);
+    this->set_csr(Csr::Mepc, this->get_pc());
+    this->set_csr(Csr::Mstatus, mstatus);
+
+    this->set_pc(this->get_csr(Csr::Mtvec) & ~0b11UL);
+    this->set_priv(Privilege::Machine);
+}
+
+bool Core::has_csr(std::uint32_t csr) const {
+    switch (static_cast<Csr>(csr)) {
+        case Csr::Mstatus:
+        case Csr::Mie:
+        case Csr::Mtvec:
+        case Csr::Mscratch:
+        case Csr::Mepc:
+        case Csr::Mcause:
+        case Csr::Mtval:
+        case Csr::Pmpcfg0:
+        case Csr::Pmpaddr0:
+        case Csr::Mhartid:
+            return true;
+
+        default:
+            return false;
+    }
 }

@@ -46,9 +46,11 @@ int main(int argc, char *argv[]) {
         //     }
         // }
 
-        Commit step_commit = Executor::step(core, mem, decoded);
+        const std::optional<Commit> step_commit = Executor::step(core, mem, decoded);
 
-        std::cout << step_commit.to_string() << std::endl;
+        if (step_commit) {
+            std::cout << step_commit->to_string() << std::endl;
+        }
 
         if (mem.get_64(image.tohost)) {
             break;

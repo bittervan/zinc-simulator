@@ -3,13 +3,21 @@
 #include <stdexcept>
 #include <format>
 
-Commit Executor::step(Core &core, Memory &mem, const DecodedInsn &insn) {
-    StepResult result = std::visit(
+std::optional<Commit> Executor::step(Core &core, Memory &mem, const DecodedInsn &insn) {
+    StepResult step_result = std::visit(
         [&](const auto& concrete_insn) -> StepResult {
             return execute(core, mem, concrete_insn);
         },
         insn
     );
+
+    if (const Exception* exception = std::get_if<Exception>(&step_result)) {
+        core.take_exception(*exception);
+        return std::nullopt;
+    }
+
+    NormalStep* normal_step = std::get_if<NormalStep>(&step_result);
+    NormalStep& result = *normal_step;
 
     std::uint64_t pc = core.get_pc();
     std::uint32_t raw_insn = mem.get_32(pc);
@@ -21,98 +29,75 @@ Commit Executor::step(Core &core, Memory &mem, const DecodedInsn &insn) {
         return write.type == RegType::X && write.num == 0;
     });
 
-    if (result.exception) {
-        std::uint64_t mcause = result.exception->mcause;
-        std::uint64_t mtval = result.exception->mtval;
 
-        std::uint64_t mstatus = core.get_csr(Csr::Mstatus);
-        if ((mstatus & MSTATUS_MIE_MASK) != 0) {
-            mstatus |= MSTATUS_MPIE_MASK;
+    core.set_pc(result.next_pc.value_or(core.get_pc() + 4));
+    core.set_priv(result.next_privilege.value_or(core.get_priv()));
+    
+    for (RegWrite &reg_write : result.reg_writes) {
+        if (reg_write.type == RegType::X) {
+            core.set_gpr(reg_write.num, reg_write.value);
+        } else if (reg_write.type == RegType::Csr) {
+            reg_write.value = core.set_csr(static_cast<Csr>(reg_write.num), reg_write.value);
         } else {
-            mstatus &= ~MSTATUS_MPIE_MASK;
+            throw std::runtime_error(
+                std::format("Unrecognized RegWrite type {}", static_cast<uint32_t>(reg_write.type))
+            );
         }
+    }
 
-        mstatus &= ~MSTATUS_MIE_MASK;
-        mstatus &= ~MSTATUS_MPP_MASK;
-        mstatus |= static_cast<std::uint64_t>(core.get_priv()) << 11;
-
-        ret.reg_writes.emplace_back(Csr::Mcause, mcause);
-        ret.reg_writes.emplace_back(Csr::Mtval, mtval);
-        ret.reg_writes.emplace_back(Csr::Mepc, core.get_pc());
-        ret.reg_writes.emplace_back(Csr::Mstatus, mstatus);
-
-        core.set_pc(core.get_csr(Csr::Mtvec) & ~0b11UL);
-        core.set_priv(Privilege::Machine);
-    } else {
-        core.set_pc(result.next_pc.value_or(core.get_pc() + 4));
-        core.set_priv(result.next_privilege.value_or(core.get_priv()));
-        
-        for (const RegWrite &reg_write : result.reg_writes) {
-            if (reg_write.type == RegType::X) {
-                core.set_gpr(reg_write.num, reg_write.value);
-            } else if (reg_write.type == RegType::Csr) {
-                core.set_csr(static_cast<Csr>(reg_write.num), reg_write.value);
-            } else {
+    for (const MemAccess &mem_write : result.mem_writes) {
+        switch (mem_write.size) {
+            case 1: {
+                mem.set_8(mem_write.addr, mem_write.value);
+                break;
+            }
+            case 2: {
+                mem.set_16(mem_write.addr, mem_write.value);
+                break;
+            }
+            case 4: {
+                mem.set_32(mem_write.addr, mem_write.value);
+                break;
+            }
+            case 8: {
+                mem.set_64(mem_write.addr, mem_write.value);
+                break;
+            }
+            default: {
                 throw std::runtime_error(
-                    std::format("Unrecognized RegWrite type {}", static_cast<uint32_t>(reg_write.type))
+                    std::format("Unsupported memory write size: {}", mem_write.size)
                 );
             }
         }
-
-        for (const MemAccess &mem_write : result.mem_writes) {
-            switch (mem_write.size) {
-                case 1: {
-                    mem.set_8(mem_write.addr, mem_write.value);
-                    break;
-                }
-                case 2: {
-                    mem.set_16(mem_write.addr, mem_write.value);
-                    break;
-                }
-                case 4: {
-                    mem.set_32(mem_write.addr, mem_write.value);
-                    break;
-                }
-                case 8: {
-                    mem.set_64(mem_write.addr, mem_write.value);
-                    break;
-                }
-                default: {
-                    throw std::runtime_error(
-                        std::format("Unsupported memory write size: {}", mem_write.size)
-                    );
-                }
-            }
-        }
-
-        ret = Commit{
-            .pc = pc,
-            .insn = raw_insn,
-            .priv = current_priv,
-            .reg_writes = std::move(result.reg_writes),
-            .mem_reads = std::move(result.mem_reads),
-            .mem_writes = std::move(result.mem_writes),
-        };
     }
+
+    ret = Commit{
+        .pc = pc,
+        .insn = raw_insn,
+        .priv = current_priv,
+        .reg_writes = std::move(result.reg_writes),
+        .mem_reads = std::move(result.mem_reads),
+        .mem_writes = std::move(result.mem_writes),
+    };
 
     return ret;
 }
 
 StepResult Executor::execute(const Core &, const Memory &, const LuiInsn& insn) {
-    StepResult ret;
+    NormalStep ret;
     ret.reg_writes.emplace_back(RegType::X, insn.rd, static_cast<std::uint64_t>(insn.imm));
     return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory &, const AuipcInsn& insn) {
-    StepResult ret;
+    NormalStep ret;
     uint64_t result = core.get_pc() + insn.imm;
     ret.reg_writes.emplace_back(RegType::X, insn.rd, result);
     return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory&, const JalInsn& insn) {
-    StepResult ret;
+    NormalStep ret;
     ret.next_pc = static_cast<int64_t>(core.get_pc()) + insn.imm;
     ret.reg_writes.emplace_back(RegType::X, insn.rd, core.get_pc() + 4);
     return ret;
@@ -126,7 +111,7 @@ StepResult Executor::execute(const Core &core, const Memory &mem, const JalrInsn
 }
 
 StepResult Executor::execute(const Core &core, const Memory &, const BranchInsn& insn) {
-    StepResult ret;
+    NormalStep ret;
     bool should_branch = false;
     std::uint64_t rs1_val = core.get_gpr(insn.rs1);
     std::uint64_t rs2_val = core.get_gpr(insn.rs2);
@@ -178,7 +163,7 @@ StepResult Executor::execute(const Core &core, const Memory &mem, const LoadInsn
 }
 
 StepResult Executor::execute(const Core &core, const Memory &, const StoreInsn& insn) {
-    StepResult ret;
+    NormalStep ret;
 
     std::uint64_t addr = core.get_gpr(insn.rs1) + static_cast<uint64_t>(insn.imm);
     std::uint64_t val = core.get_gpr(insn.rs2);
@@ -220,7 +205,7 @@ StepResult Executor::execute(const Core &core, const Memory &, const StoreInsn& 
 }
 
 StepResult Executor::execute(const Core &core, const Memory &, const OpImmInsn& insn) {
-    StepResult ret;
+    NormalStep ret;
     std::uint64_t imm_val = insn.imm;
     std::uint64_t rs1_val = core.get_gpr(insn.rs1);
     std::uint64_t rd_val = 0;
@@ -284,7 +269,7 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpImmInsn& 
 }
 
 StepResult Executor::execute(const Core &core, const Memory &, const OpInsn& insn) {
-    StepResult ret;
+    NormalStep ret;
     std::uint64_t rs1_val = core.get_gpr(insn.rs1);
     std::uint64_t rs2_val = core.get_gpr(insn.rs2);
     std::uint64_t rd_val = 0;
@@ -373,12 +358,32 @@ StepResult Executor::execute(const Core &core, const Memory &, const MiscMemInsn
             );
         }
     }
-    StepResult ret;
+    NormalStep ret;
     return ret;
 }
 
+static inline bool is_csr_insn(const SystemInsn& insn) {
+    switch (insn.type) {
+        case SystemInsnType::Csrrc:
+        case SystemInsnType::Csrrw:
+        case SystemInsnType::Csrrs:
+        case SystemInsnType::Csrrci:
+        case SystemInsnType::Csrrwi:
+        case SystemInsnType::Csrrsi:
+            return true;
+        default:
+            return false;
+    }
+}
+
 StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn& insn) {
-    StepResult ret;
+    NormalStep ret;
+    if (is_csr_insn(insn) && !core.has_csr(insn.csr)) {
+        return Exception{
+            .mcause = 2,
+            .mtval = 0,
+        };
+    }
     switch (insn.type) {
         case SystemInsnType::Csrrs: {
             std::uint64_t value = core.get_gpr(insn.rs1);
@@ -404,13 +409,11 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
         }
         case SystemInsnType::Csrrwi: {
             std::uint64_t old_csr_val = core.get_csr(static_cast<Csr>(insn.csr));
-            std::uint64_t new_csr_val = core.get_gpr(insn.uimm);
+            std::uint64_t new_csr_val = insn.uimm;
             
             ret.reg_writes.emplace_back(RegType::X, insn.rd, old_csr_val);
 
-            if (new_csr_val) {
-                ret.reg_writes.emplace_back(RegType::Csr, insn.csr, new_csr_val);
-            }
+            ret.reg_writes.emplace_back(RegType::Csr, insn.csr, new_csr_val);
 
             break;
         }
@@ -421,7 +424,7 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
             std::uint64_t old_mstatus = core.get_csr(Csr::Mstatus);
             std::uint64_t new_mstatus = old_mstatus;
 
-            std::uint64_t mpp = old_mstatus & MSTATUS_MPP_MASK >> 11;
+            std::uint64_t mpp = (old_mstatus & MSTATUS_MPP_MASK) >> 11;
             if (old_mstatus & MSTATUS_MPIE_MASK) {
                 new_mstatus |= MSTATUS_MIE_MASK;
             } else {
@@ -439,7 +442,7 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
             
             ret.next_privilege = static_cast<Privilege>(mpp);
 
-            ret.reg_writes.emplace_back(Csr::Mstatus, new_mstatus);
+            ret.reg_writes.emplace_back(RegType::Csr, static_cast<uint32_t>(Csr::Mstatus), new_mstatus);
 
             break;
         }
@@ -464,11 +467,10 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
                 }
             }
 
-            ret.exception = Exception {
+            return Exception {
                 .mcause = cause,
                 .mtval = 0, 
             };
-            break;
         }
         default: {
             throw std::runtime_error(
@@ -482,7 +484,7 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
 
 StepResult Executor::execute(const Core &core, const Memory &, const OpImm32Insn& insn) {
 
-    StepResult ret;
+    NormalStep ret;
     std::uint32_t imm_val = insn.imm;
     std::uint32_t rs1_val = core.get_gpr(insn.rs1);
     std::uint32_t rd_val = 0;
