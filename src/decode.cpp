@@ -1,4 +1,6 @@
 #include <decode.h>
+#include <format>
+#include <stdexcept>
 
 constexpr std::uint32_t OPCODE_LUI =         0b0110111;
 constexpr std::uint32_t OPCODE_AUIPC =       0b0010111;
@@ -13,6 +15,31 @@ constexpr std::uint32_t OPCODE_MISC_MEM =    0b0001111;
 constexpr std::uint32_t OPCODE_SYSTEM =      0b1110011;
 constexpr std::uint32_t OPCODE_OP_IMM_32 =   0b0011011;
 constexpr std::uint32_t OPCODE_OP_32 =       0b0111011;
+
+constexpr std::uint32_t OPCODE_LOAD_FP =    0b0000111;
+constexpr std::uint32_t OPCODE_STORE_FP =   0b0100111;
+constexpr std::uint32_t OPCODE_MADD_FP  =   0b1000011;
+constexpr std::uint32_t OPCODE_MSUB_FP  =   0b1000111;
+constexpr std::uint32_t OPCODE_NMSUB_FP =   0b1001011;
+constexpr std::uint32_t OPCODE_NMADD_FP =   0b1001111;
+constexpr std::uint32_t OPCODE_OP_FP =      0b1010011;
+
+constexpr std::uint32_t OP_FP_FUNCT7_ADD_S =                    0b0000000;
+constexpr std::uint32_t OP_FP_FUNCT7_SUB_S =                    0b0000100;
+constexpr std::uint32_t OP_FP_FUNCT7_MUL_S =                    0b0001000;
+constexpr std::uint32_t OP_FP_FUNCT7_DIV_S =                    0b0001100;
+constexpr std::uint32_t OP_FP_FUNCT7_SGNJ_S =                   0b0010000;
+constexpr std::uint32_t OP_FP_FUNCT7_MIN_MAX_S =                0b0010100;
+constexpr std::uint32_t OP_FP_FUNCT7_SQRT_S =                   0b0101100;
+constexpr std::uint32_t OP_FP_FUNCT7_COMPARE_S =                0b1010000;
+constexpr std::uint32_t OP_FP_FUNCT7_CVT_TO_INT_S =             0b1100000;
+constexpr std::uint32_t OP_FP_FUNCT7_CVT_FROM_INT_S =           0b1101000;
+constexpr std::uint32_t OP_FP_FUNCT7_MOVE_TO_INT_OR_CLASS_S =   0b1110000;
+constexpr std::uint32_t OP_FP_FUNCT7_MOVE_FROM_INT_S =          0b1111000;
+
+constexpr std::uint32_t OP_SGNJ_FUNCT3_INJECT = 0b000;
+constexpr std::uint32_t OP_SGNJ_FUNCT3_INJECT_NEGATED = 0b001;
+constexpr std::uint32_t OP_SGNJ_FUNCT3_INJECT_XOR = 0b010;
 
 static inline std::uint32_t get_opcode(std::uint32_t insn) {
     return insn & 0b0000000'00000'00000'000'00000'1111111;
@@ -237,6 +264,84 @@ DecodedInsn Decoder::decode(std::uint32_t insn) {
                 .type = static_cast<OpType>(get_funct7(insn) << 3 | get_funct3(insn)),
                 .rs1 = get_rs1(insn),
                 .rs2 = get_rs2(insn),
+                .rd = get_rd(insn)
+            };
+            break;
+        }
+        case OPCODE_LOAD_FP: {
+            ret = LoadFpInsn {
+                .imm = get_i_type_imm(insn),
+                .rs1 = get_rs1(insn),
+                .rd = get_rd(insn)
+            };
+            break;
+        }
+        case OPCODE_STORE_FP: {
+            ret = StoreFpInsn {
+                .imm = get_s_type_imm(insn),
+                .rs1 = get_rs1(insn),
+                .rs2 = get_rs2(insn),
+            };
+            break;
+        }
+        case OPCODE_OP_FP: {
+            std::uint32_t funct7 = get_funct7(insn);
+            std::uint32_t funct3 = get_funct3(insn);
+            OpFpType type;
+            
+            switch (funct7) {
+                case OP_FP_FUNCT7_ADD_S: {
+                    type = OpFpType::Add;
+                    break;
+                }
+                case OP_FP_FUNCT7_SUB_S: {
+                    type = OpFpType::Sub;
+                    break;
+                }
+                case OP_FP_FUNCT7_MUL_S: {
+                    type = OpFpType::Mul;
+                    break;
+                }
+                case OP_FP_FUNCT7_DIV_S: {
+                    type = OpFpType::Div;
+                    break;
+                }
+                case OP_FP_FUNCT7_SGNJ_S: {
+                    switch (funct3) {
+                        case OP_SGNJ_FUNCT3_INJECT: {
+                            type = OpFpType::Sgnj;
+                            break;
+                        }
+                        case OP_SGNJ_FUNCT3_INJECT_NEGATED: {
+                            type = OpFpType::Sgnjn;
+                            break;
+                        }
+                        case OP_SGNJ_FUNCT3_INJECT_XOR: {
+                            type = OpFpType::Sgnjx;
+                            break;
+                        }
+                        default: {
+                            throw std::runtime_error(
+                                std::format("Invalid funct3 {:03b} for Sign Injection instruction.", funct3)
+                            );
+                        }
+                    }
+                    break;
+                }
+                default: {
+                    throw std::runtime_error(
+                        std::format("Funct7 {:07b} for OpFpInsn not implemented, cannot decode", funct7)
+                    );
+                }
+            }
+
+            ret = OpFpInsn {
+                // .funct7 = get_funct7(insn),
+                .type = static_cast<OpFpType>(0),
+                .rm = static_cast<RoundingMode>(get_funct3(insn)),
+                .rs1 = get_rs1(insn),
+                .rs2 = get_rs2(insn),
+                // .funct3 = get_funct3(insn),
                 .rd = get_rd(insn)
             };
             break;

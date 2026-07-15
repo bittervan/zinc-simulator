@@ -29,6 +29,24 @@ std::optional<Commit> Executor::step(Core &core, Memory &mem, const DecodedInsn 
         return write.type == RegType::X && write.num == 0;
     });
 
+    bool writes_fpr = std::any_of(result.reg_writes.begin(), result.reg_writes.end(), [](const RegWrite& write) {
+        return write.type == RegType::F;
+    });
+
+    if (writes_fpr) {
+        std::uint64_t mstatus =
+            core.get_csr(Csr::Mstatus);
+
+        std::uint64_t new_mstatus =
+            (mstatus & ~MSTATUS_FS_MASK) |
+            MSTATUS_FS_DIRTY;
+
+        result.reg_writes.emplace_back(
+            RegType::Csr,
+            static_cast<std::uint32_t>(Csr::Mstatus),
+            new_mstatus
+        );
+    }
 
     core.set_pc(result.next_pc.value_or(core.get_pc() + 4));
     core.set_priv(result.next_privilege.value_or(core.get_priv()));
@@ -38,6 +56,8 @@ std::optional<Commit> Executor::step(Core &core, Memory &mem, const DecodedInsn 
             core.set_gpr(reg_write.num, reg_write.value);
         } else if (reg_write.type == RegType::Csr) {
             reg_write.value = core.set_csr(static_cast<Csr>(reg_write.num), reg_write.value);
+        } else if (reg_write.type == RegType::F) {
+            core.set_fpr(reg_write.num, reg_write.value);
         } else {
             throw std::runtime_error(
                 std::format("Unrecognized RegWrite type {}", static_cast<uint32_t>(reg_write.type))
@@ -649,6 +669,30 @@ StepResult Executor::execute(const Core &core, const Memory &, const Op32Insn& i
 
     ret.reg_writes.emplace_back(RegType::X, insn.rd, new_val);
     return ret;
+}
+
+StepResult Executor::execute(const Core &core, const Memory &mem, const LoadFpInsn& insn) {
+    NormalStep ret;
+    ret.reg_writes.emplace_back(RegType::F, insn.rd, mem.get_32(core.get_gpr(insn.rs1) + insn.imm));
+    return ret;
+}
+
+StepResult Executor::execute(const Core &core, const Memory &, const StoreFpInsn& insn) {
+    NormalStep ret;
+    ret.mem_writes.emplace_back(core.get_gpr(insn.rs1) + insn.imm, core.get_fpr(insn.rs2), 4);
+    return ret;
+}
+
+StepResult Executor::execute(const Core &core, const Memory &mem, const OpFpInsn& insn) {
+    NormalStep ret;
+    switch (insn.type) {
+        case OpFpType::Add : {
+            
+        }
+        default: {
+            break;
+        }
+    }
 }
 
 StepResult Executor::execute(const Core &core, const Memory &mem, const InvalidInsn& insn) {

@@ -46,6 +46,11 @@ public:
 
     static StepResult execute(const Core &core, const Memory &mem, const Op32Insn& insn);
 
-    static StepResult execute(const Core &core, const Memory &mem, const InvalidInsn& insn);
+    static StepResult execute(const Core &core, const Memory &mem, const LoadFpInsn& insn);
 
+    static StepResult execute(const Core &core, const Memory &mem, const StoreFpInsn& insn);
+
+    static StepResult execute(const Core &core, const Memory &mem, const OpFpInsn& insn);
+
+    static StepResult execute(const Core &core, const Memory &mem, const InvalidInsn& insn);
 };

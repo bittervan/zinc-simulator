@@ -53,6 +53,56 @@ enum class MiscMemInsnType {
     FenceI =    0b001,
 };
 
+enum class OpFpType {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Sqrt,
+
+    Min,
+    Max,
+
+    Sgnj,
+    Sgnjn,
+    Sgnjx,
+
+    Eq,
+    Lt,
+    Le,
+    Class,
+
+    MoveToX,
+    MoveFromX,
+
+    CvtWFromS,
+    CvtWuFromS,
+    CvtLFromS,
+    CvtLuFromS,
+
+    CvtSToW,
+    CvtSToWu,
+    CvtSToL,
+    CvtSToLu,
+};
+
+enum class FmaFpType {
+    MAdd,
+    MSub,
+    NmSub,
+    NmAdd,
+};
+
+enum class RoundingMode : std::uint32_t {
+    Rne     = 0b000, // Round to nearest, ties to even
+    Rtz     = 0b001, // Round toward zero
+    Rdn     = 0b010, // Round down, toward -infinity
+    Rup     = 0b011, // Round up, toward +infinity
+    Rmm     = 0b100, // Round to nearest, ties to max magnitude
+    Dynamic = 0b111, // Use frm CSR
+};
+
+
 struct LuiInsn {
     std::int64_t imm;
     std::uint32_t rd;
@@ -135,6 +185,37 @@ struct Op32Insn {
     std::uint32_t rd;
 };
 
+struct LoadFpInsn {
+    std::int64_t imm;
+    std::uint32_t rs1;
+    std::uint32_t rd;
+};
+
+struct StoreFpInsn {
+    std::int64_t imm;
+    std::uint32_t rs1;
+    std::uint32_t rs2;
+};
+
+struct OpFpInsn {
+    OpFpType type;
+    RoundingMode rm;
+    std::uint32_t rs1;
+    std::uint32_t rs2;
+    std::uint32_t rd;
+};
+
+struct FmaFpInsn {
+    FmaFpType type;
+    RoundingMode rm;
+    std::uint32_t rs1;
+    std::uint32_t rs2;
+    std::uint32_t rs3;
+    std::uint32_t rd;
+};
+
+
+
 struct InvalidInsn {};
 
 using DecodedInsn = std::variant<
@@ -151,6 +232,9 @@ using DecodedInsn = std::variant<
     SystemInsn,
     OpImm32Insn,
     Op32Insn,
+    LoadFpInsn,
+    StoreFpInsn,
+    OpFpInsn,
     InvalidInsn
 >;
 

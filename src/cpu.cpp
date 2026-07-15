@@ -1,4 +1,5 @@
 #define NUM_GPRS 32
+#define NUM_FPRS 32
 
 #include <cpu.h>
 #include <decode.h>
@@ -11,7 +12,7 @@ RegWrite::RegWrite(RegType type, std::uint32_t num, std::uint64_t value) : type(
 
 MemAccess::MemAccess(std::uint64_t addr, std::uint64_t value, std::uint32_t size) : addr(addr), value(value), size(size) {}
 
-Core::Core(std::uint64_t init_pc) : pc(init_pc), gprs(NUM_GPRS, 0) {
+Core::Core(std::uint64_t init_pc) : pc(init_pc), gprs(NUM_GPRS, 0), fprs(NUM_FPRS, 0) {
     this->csrs[static_cast<std::uint32_t>(Csr::Mstatus)] = MSTATUS_UXL_RV64;
 }
 
@@ -32,26 +33,71 @@ void Core::set_gpr(std::uint32_t index, std::uint64_t value) {
     this->gprs[index] = value;
 }
 
+std::uint64_t Core::get_fpr(std::uint32_t index) const {
+    return this->fprs[index];
+}
+
+void Core::set_fpr(std::uint32_t index, std::uint32_t value) {
+    this->fprs[index] = value;
+}
+
 std::uint64_t Core::get_csr(Csr csr) const {
-    return this->csrs[static_cast<std::uint32_t>(csr)];
+    switch (csr) {
+        case Csr::Fflags: {
+            return this->csrs[static_cast<std::uint32_t>(Csr::Fcsr)] & 0x1f;
+        }
+        case Csr::Frm: {
+            return this->csrs[static_cast<std::uint32_t>(Csr::Fcsr)] >> 5;
+        }
+        default: {
+            return this->csrs[static_cast<std::uint32_t>(csr)];
+        }
+    }
 }
 
 std::uint64_t Core::set_csr(Csr csr, std::uint64_t value) {
     const std::uint32_t index = static_cast<std::uint32_t>(csr);
+    std::uint64_t ret;
 
       switch (csr) {
-          case Csr::Mstatus: {
-            csrs[index] = (csrs[index] & ~(MSTATUS_WRITABLE_MASK)) | (value & MSTATUS_WRITABLE_MASK);
+        case Csr::Fflags: {
+            std::uint64_t fcsr = csrs[static_cast<std::uint64_t>(Csr::Fcsr)];
+            fcsr = (fcsr & ~0x1fULL) | (value & 0x1fULL);
+            ret = fcsr & 0x1fULL;
+            csrs[static_cast<std::uint64_t>(Csr::Fcsr)] = fcsr;
+            break;
+        }
+        case Csr::Frm: {
+            std::uint64_t fcsr = csrs[static_cast<std::uint64_t>(Csr::Fcsr)];
+            fcsr = (fcsr & ~0xe0ULL) | ((value & 0x7ULL) << 5);
+            ret = (fcsr >> 5) & 0x7ULL;
+            csrs[static_cast<std::uint64_t>(Csr::Fcsr)] = fcsr;
+            break;
+        }
+        case Csr::Fcsr: {
+            ret = csrs[index] = value & 0xffUL;
+            break;
+        }
+        case Csr::Mstatus: {
+            std::uint64_t new_value = (csrs[index] & ~MSTATUS_WRITABLE_MASK) | (value & MSTATUS_WRITABLE_MASK);
+
+            new_value &= ~MSTATUS_SD_MASK;
+
+            if ((new_value & MSTATUS_FS_MASK) == MSTATUS_FS_DIRTY) {
+                new_value |= MSTATUS_SD_MASK;
+            }
+
+            ret = csrs[index] = new_value;
             break;
         }
 
         case Csr::Mepc: {
-            csrs[index] = value & ~0b11ULL;
+            ret = csrs[index] = value & ~0b11ULL;
             break;
         }
 
         case Csr::Mtvec: {
-            csrs[index] = value & ~0b11ULL;
+            ret = csrs[index] = value & ~0b11ULL;
             break;
         }
 
@@ -61,7 +107,7 @@ std::uint64_t Core::set_csr(Csr csr, std::uint64_t value) {
         case Csr::Mscratch:
         case Csr::Mcause:
         case Csr::Mtval:
-            csrs[index] = value;
+            ret = csrs[index] = value;
             break;
 
         case Csr::Mhartid: {
@@ -80,7 +126,7 @@ std::uint64_t Core::set_csr(Csr csr, std::uint64_t value) {
         }
     }
 
-    return csrs[index];
+    return ret;
 }
 
 Privilege Core::get_priv() const {
@@ -186,6 +232,12 @@ void Core::take_exception(const Exception& exception) {
         mstatus &= ~MSTATUS_MPIE_MASK;
     }
 
+    if ((mstatus & MSTATUS_FS_MASK) == MSTATUS_FS_DIRTY) {
+        mstatus |= MSTATUS_SD_MASK;
+    } else {
+        mstatus &= ~MSTATUS_SD_MASK;
+    }
+
     mstatus &= ~MSTATUS_MIE_MASK;
     mstatus &= ~MSTATUS_MPP_MASK;
     mstatus |= static_cast<std::uint64_t>(this->get_priv()) << 11;
@@ -201,6 +253,9 @@ void Core::take_exception(const Exception& exception) {
 
 bool Core::has_csr(std::uint32_t csr) const {
     switch (static_cast<Csr>(csr)) {
+        case Csr::Fcsr:
+        case Csr::Fflags:
+        case Csr::Frm:
         case Csr::Mstatus:
         case Csr::Mie:
         case Csr::Mtvec:
