@@ -47,6 +47,9 @@ constexpr std::uint32_t OP_EQ_FUNCT3 = 0b010;
 constexpr std::uint32_t OP_LT_FUNCT3 = 0b001;
 constexpr std::uint32_t OP_LE_FUNCT3 = 0b000;
 
+constexpr std::uint32_t OP_MIN_FUNCT3 = 0b000;
+constexpr std::uint32_t OP_MAX_FUNCT3 = 0b001;
+
 constexpr std::uint32_t OP_FCVT_RS2_W = 0b00000;
 constexpr std::uint32_t OP_FCVT_RS2_WU = 0b00001;
 constexpr std::uint32_t OP_FCVT_RS2_L = 0b00010;
@@ -315,6 +318,33 @@ DecodedInsn Decoder::decode(std::uint32_t insn) {
                 }
                 case OP_FP_FUNCT7_DIV_S: {
                     type = OpFpType::Div;
+                    break;
+                }
+                case OP_FP_FUNCT7_MIN_MAX_S: {
+                    switch (funct3) {
+                        case OP_MIN_FUNCT3: {
+                            type = OpFpType::Min;
+                            break;
+                        }
+                        case OP_MAX_FUNCT3: {
+                            type = OpFpType::Max;
+                            break;
+                        }
+                        default: {
+                            throw std::runtime_error(
+                                std::format("Invalid funct3 {:03b} for FMIN.S/FMAX.S instruction", funct3)
+                            );
+                        }
+                    }
+                    break;
+                }
+                case OP_FP_FUNCT7_SQRT_S: {
+                    if (get_rs2(insn) != 0) {
+                        throw std::runtime_error(
+                            std::format("Invalid FSQRT.S instruction {:08x}", insn)
+                        );
+                    }
+                    type = OpFpType::Sqrt;
                     break;
                 }
                 case OP_FP_FUNCT7_SGNJ_S: {
