@@ -4,7 +4,7 @@
 #include <decode.h>
 
 struct FpResult {
-    std::uint32_t value;
+    std::uint64_t value;
     std::uint32_t flags;
 };
 
@@ -39,6 +39,8 @@ public:
     static FpResult binary(OpFpType op, std::uint32_t lhs, std::uint32_t rhs, RoundingMode rm);
 
     static FpResult unary(OpFpType op, std::uint32_t operand, RoundingMode rm);
+
+    static FpResult convert(OpFpType op, std::uint64_t operand, RoundingMode rm);
 
     // static FpResult fma(
     //     OpFma op,

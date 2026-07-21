@@ -793,7 +793,18 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpFpInsn& i
         case OpFpType::CvtWuFromS:
         case OpFpType::CvtLFromS:
         case OpFpType::CvtLuFromS: {
-            // 调用对应 FPU 接口，结果写 RegType::X
+            const FpResult result = Fpu::convert(
+                insn.type,
+                core.get_fpr(insn.rs1),
+                rounding_mode
+            );
+
+            append_fp_flags(result);
+            ret.reg_writes.emplace_back(
+                RegType::X,
+                insn.rd,
+                result.value
+            );
             break;
         }
 
@@ -820,7 +831,13 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpFpInsn& i
         case OpFpType::CvtSToWu:
         case OpFpType::CvtSToL:
         case OpFpType::CvtSToLu: {
-            // 从 GPR 读取，结果写 RegType::F
+            const FpResult result = Fpu::convert(
+                insn.type,
+                core.get_gpr(insn.rs1),
+                rounding_mode
+            );
+
+            append_fp_result(result);
             break;
         }
 

@@ -453,6 +453,244 @@ FpResult compare(
     };
 }
 
+FpResult integer_to_float(
+    OpFpType op,
+    std::uint64_t operand,
+    RoundingMode rm
+) {
+    bool sign = false;
+    std::uint64_t magnitude;
+
+    switch (op) {
+        case OpFpType::CvtSToW: {
+            const std::uint64_t word =
+                static_cast<std::uint32_t>(operand);
+            sign = (word & (1ULL << 31)) != 0;
+            magnitude = sign
+                ? (~word + 1) & 0xffff'ffffULL
+                : word;
+            break;
+        }
+        case OpFpType::CvtSToWu:
+            magnitude = static_cast<std::uint32_t>(operand);
+            break;
+        case OpFpType::CvtSToL:
+            sign = (operand & (1ULL << 63)) != 0;
+            magnitude = sign ? ~operand + 1 : operand;
+            break;
+        case OpFpType::CvtSToLu:
+            magnitude = operand;
+            break;
+        default:
+            throw std::logic_error(
+                "operation is not an integer-to-FP32 conversion"
+            );
+    }
+
+    if (magnitude == 0) {
+        return FpResult{.value = 0, .flags = 0};
+    }
+
+    std::int32_t exponent = 0;
+    for (std::uint64_t value = magnitude; value > 1; value >>= 1) {
+        ++exponent;
+    }
+
+    const std::uint64_t significand = exponent > 26
+        ? shift_right_jam(
+            magnitude,
+            static_cast<unsigned>(exponent - 26)
+        )
+        : magnitude << static_cast<unsigned>(26 - exponent);
+
+    return round_and_pack(sign, exponent, significand, rm);
+}
+
+std::uint64_t encode_integer_result(
+    bool sign,
+    std::uint64_t magnitude,
+    unsigned width
+) {
+    const std::uint64_t value = sign
+        ? std::uint64_t{0} - magnitude
+        : magnitude;
+
+    if (width == 64) {
+        return value;
+    }
+
+    const std::uint32_t word = static_cast<std::uint32_t>(value);
+    return (word & (1U << 31)) != 0
+        ? 0xffff'ffff'0000'0000ULL | word
+        : word;
+}
+
+FpResult float_to_integer(
+    OpFpType op,
+    std::uint32_t operand_raw,
+    RoundingMode rm
+) {
+    bool signed_result;
+    unsigned width;
+
+    switch (op) {
+        case OpFpType::CvtWFromS:
+            signed_result = true;
+            width = 32;
+            break;
+        case OpFpType::CvtWuFromS:
+            signed_result = false;
+            width = 32;
+            break;
+        case OpFpType::CvtLFromS:
+            signed_result = true;
+            width = 64;
+            break;
+        case OpFpType::CvtLuFromS:
+            signed_result = false;
+            width = 64;
+            break;
+        default:
+            throw std::logic_error(
+                "operation is not an FP32-to-integer conversion"
+            );
+    }
+
+    const UnpackedFp32 operand{operand_raw};
+    const bool nan = is_nan(operand.classification());
+    const bool sign = operand.sign_bit();
+    const std::uint64_t signed_max = width == 32
+        ? 0x7fff'ffffULL
+        : 0x7fff'ffff'ffff'ffffULL;
+    const std::uint64_t signed_min_magnitude = width == 32
+        ? 0x8000'0000ULL
+        : 0x8000'0000'0000'0000ULL;
+    const std::uint64_t unsigned_max = width == 32
+        ? 0xffff'ffffULL
+        : 0xffff'ffff'ffff'ffffULL;
+
+    const auto invalid_result = [&]() -> FpResult {
+        if (nan || !sign) {
+            return FpResult{
+                .value = encode_integer_result(
+                    false,
+                    signed_result ? signed_max : unsigned_max,
+                    width
+                ),
+                .flags = FP_FLAG_NV,
+            };
+        }
+
+        return FpResult{
+            .value = signed_result
+                ? encode_integer_result(true, signed_min_magnitude, width)
+                : 0,
+            .flags = FP_FLAG_NV,
+        };
+    };
+
+    if (nan || operand.classification() == FpClass::Infinity) {
+        return invalid_result();
+    }
+
+    if (operand.classification() == FpClass::Zero) {
+        return FpResult{.value = 0, .flags = 0};
+    }
+
+    std::uint64_t magnitude = 0;
+    bool inexact = false;
+    bool overflow = false;
+
+    if (operand.unbiased_exponent() >= 23) {
+        const auto shift = static_cast<unsigned>(
+            operand.unbiased_exponent() - 23
+        );
+        const std::uint64_t significand =
+            operand.normalized_significand();
+
+        if (
+            shift >= 64 ||
+            significand > (0xffff'ffff'ffff'ffffULL >> shift)
+        ) {
+            overflow = true;
+        } else {
+            magnitude = significand << shift;
+        }
+    } else {
+        const auto shift = static_cast<unsigned>(
+            23 - operand.unbiased_exponent()
+        );
+        const std::uint64_t significand =
+            operand.normalized_significand();
+        std::uint64_t remainder;
+        std::uint64_t halfway = 0;
+
+        if (shift >= 64) {
+            remainder = significand;
+        } else {
+            magnitude = significand >> shift;
+            remainder = significand & ((1ULL << shift) - 1);
+            halfway = 1ULL << (shift - 1);
+        }
+
+        inexact = remainder != 0;
+        bool round_up = false;
+
+        switch (rm) {
+            case RoundingMode::Rne:
+                round_up = shift < 64 && (
+                    remainder > halfway ||
+                    (remainder == halfway && (magnitude & 1) != 0)
+                );
+                break;
+            case RoundingMode::Rtz:
+                break;
+            case RoundingMode::Rdn:
+                round_up = sign && inexact;
+                break;
+            case RoundingMode::Rup:
+                round_up = !sign && inexact;
+                break;
+            case RoundingMode::Rmm:
+                round_up = shift < 64 && remainder >= halfway;
+                break;
+            case RoundingMode::Dynamic:
+                throw std::logic_error(
+                    "dynamic rounding mode was not resolved"
+                );
+        }
+
+        if (round_up) {
+            if (magnitude == 0xffff'ffff'ffff'ffffULL) {
+                overflow = true;
+            } else {
+                ++magnitude;
+            }
+        }
+    }
+
+    if (!overflow) {
+        if (signed_result) {
+            const std::uint64_t limit = sign
+                ? signed_min_magnitude
+                : signed_max;
+            overflow = magnitude > limit;
+        } else {
+            overflow = (sign && magnitude != 0) ||
+                magnitude > unsigned_max;
+        }
+    }
+
+    if (overflow) {
+        return invalid_result();
+    }
+
+    return FpResult{
+        .value = encode_integer_result(sign, magnitude, width),
+        .flags = inexact ? FP_FLAG_NX : 0,
+    };
+}
+
 FpResult min_or_max(std::uint32_t lhs_raw, std::uint32_t rhs_raw, bool maximum) {
     const UnpackedFp32 lhs{lhs_raw};
     const UnpackedFp32 rhs{rhs_raw};
@@ -746,6 +984,29 @@ FpResult Fpu::unary(OpFpType op, std::uint32_t operand, RoundingMode rm) {
         default:
             throw std::logic_error(
                 "operation is not a unary FP32 operation"
+            );
+    }
+}
+
+FpResult Fpu::convert(OpFpType op, std::uint64_t operand, RoundingMode rm) {
+    switch (op) {
+        case OpFpType::CvtWFromS:
+        case OpFpType::CvtWuFromS:
+        case OpFpType::CvtLFromS:
+        case OpFpType::CvtLuFromS:
+            return float_to_integer(
+                op,
+                static_cast<std::uint32_t>(operand),
+                rm
+            );
+        case OpFpType::CvtSToW:
+        case OpFpType::CvtSToWu:
+        case OpFpType::CvtSToL:
+        case OpFpType::CvtSToLu:
+            return integer_to_float(op, operand, rm);
+        default:
+            throw std::logic_error(
+                "operation is not an FP32 conversion"
             );
     }
 }

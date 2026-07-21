@@ -47,6 +47,11 @@ constexpr std::uint32_t OP_EQ_FUNCT3 = 0b010;
 constexpr std::uint32_t OP_LT_FUNCT3 = 0b001;
 constexpr std::uint32_t OP_LE_FUNCT3 = 0b000;
 
+constexpr std::uint32_t OP_FCVT_RS2_W = 0b00000;
+constexpr std::uint32_t OP_FCVT_RS2_WU = 0b00001;
+constexpr std::uint32_t OP_FCVT_RS2_L = 0b00010;
+constexpr std::uint32_t OP_FCVT_RS2_LU = 0b00011;
+
 static inline std::uint32_t get_opcode(std::uint32_t insn) {
     return insn & 0b0000000'00000'00000'000'00000'1111111;
 }
@@ -384,6 +389,58 @@ DecodedInsn Decoder::decode(std::uint32_t insn) {
                         default: {
                             throw std::runtime_error(
                                 std::format("Invalid funct3 {:03b} for FP compare instruction", funct3)
+                            );
+                        }
+                    }
+                    break;
+                }
+                case OP_FP_FUNCT7_CVT_TO_INT_S: {
+                    switch (get_rs2(insn)) {
+                        case OP_FCVT_RS2_W: {
+                            type = OpFpType::CvtWFromS;
+                            break;
+                        }
+                        case OP_FCVT_RS2_WU: {
+                            type = OpFpType::CvtWuFromS;
+                            break;
+                        }
+                        case OP_FCVT_RS2_L: {
+                            type = OpFpType::CvtLFromS;
+                            break;
+                        }
+                        case OP_FCVT_RS2_LU: {
+                            type = OpFpType::CvtLuFromS;
+                            break;
+                        }
+                        default: {
+                            throw std::runtime_error(
+                                std::format("Invalid rs2 {:05b} for FP-to-integer conversion", get_rs2(insn))
+                            );
+                        }
+                    }
+                    break;
+                }
+                case OP_FP_FUNCT7_CVT_FROM_INT_S: {
+                    switch (get_rs2(insn)) {
+                        case OP_FCVT_RS2_W: {
+                            type = OpFpType::CvtSToW;
+                            break;
+                        }
+                        case OP_FCVT_RS2_WU: {
+                            type = OpFpType::CvtSToWu;
+                            break;
+                        }
+                        case OP_FCVT_RS2_L: {
+                            type = OpFpType::CvtSToL;
+                            break;
+                        }
+                        case OP_FCVT_RS2_LU: {
+                            type = OpFpType::CvtSToLu;
+                            break;
+                        }
+                        default: {
+                            throw std::runtime_error(
+                                std::format("Invalid rs2 {:05b} for integer-to-FP conversion", get_rs2(insn))
                             );
                         }
                     }
