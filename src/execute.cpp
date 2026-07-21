@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <format>
 #include <fpu.h>
+#include <mul_div.h>
 
 std::optional<Commit> Executor::step(Core &core, Memory &mem, const DecodedInsn &insn) {
     StepResult step_result = std::visit(
@@ -471,6 +472,17 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpInsn& ins
             rd_val = static_cast<int64_t>(rs1_val) >> shamt;
             break;
         }
+        case OpType::Mul:
+        case OpType::Mulh:
+        case OpType::Mulhsu:
+        case OpType::Mulhu:
+        case OpType::Div:
+        case OpType::Divu:
+        case OpType::Rem:
+        case OpType::Remu: {
+            rd_val = MulDivUnit::execute(insn.type, rs1_val, rs2_val);
+            break;
+        }
         default: {
             throw std::runtime_error(
                 std::format("Not a valid OpType for OpImm instruction: {:08x}: {:010b}", core.get_pc(),static_cast<std::uint32_t>(insn.type))
@@ -730,6 +742,16 @@ StepResult Executor::execute(const Core &core, const Memory &, const Op32Insn& i
         }
         case OpType::Sra: {
             rd_val = static_cast<std::int32_t>(rs1_val) >> shamt;
+            break;
+        }
+        case OpType::Mul:
+        case OpType::Div:
+        case OpType::Divu:
+        case OpType::Rem:
+        case OpType::Remu: {
+            rd_val = static_cast<std::uint32_t>(
+                MulDivUnit::execute_word(insn.type, rs1_val, rs2_val)
+            );
             break;
         }
         default: {

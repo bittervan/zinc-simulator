@@ -34,6 +34,15 @@ enum class OpType : std::uint32_t {
     Sra  = 0b0100000'101,
     Or   = 0b0000000'110,
     And  = 0b0000000'111,
+
+    Mul    = 0b0000001'000,
+    Mulh   = 0b0000001'001,
+    Mulhsu = 0b0000001'010,
+    Mulhu  = 0b0000001'011,
+    Div    = 0b0000001'100,
+    Divu   = 0b0000001'101,
+    Rem    = 0b0000001'110,
+    Remu   = 0b0000001'111,
 };
 
 enum class SystemInsnType {

@@ -12,6 +12,7 @@ add_library(zinc_sim_lib
     src/cpu.cpp
     src/elf_loader.cpp
     src/fpu.cpp
+    src/mul_div.cpp
 )
 
 add_library(zinc_elfio INTERFACE)
