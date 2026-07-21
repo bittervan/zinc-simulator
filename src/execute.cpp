@@ -545,6 +545,19 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
 
             break;
         }
+        case SystemInsnType::Csrrc: {
+            std::uint64_t value = core.get_gpr(insn.rs1);
+            std::uint64_t old_csr_val = core.get_csr(static_cast<Csr>(insn.csr));
+            std::uint64_t new_csr_val = old_csr_val & ~value;
+
+            ret.reg_writes.emplace_back(RegType::X, insn.rd, old_csr_val);
+
+            if (insn.rs1) {
+                ret.reg_writes.emplace_back(RegType::Csr, insn.csr, new_csr_val);
+            }
+
+            break;
+        }
         case SystemInsnType::Csrrw: {
             std::uint64_t old_csr_val = core.get_csr(static_cast<Csr>(insn.csr));
             std::uint64_t new_csr_val = core.get_gpr(insn.rs1);
@@ -561,6 +574,30 @@ StepResult Executor::execute(const Core &core, const Memory &, const SystemInsn&
             ret.reg_writes.emplace_back(RegType::X, insn.rd, old_csr_val);
 
             ret.reg_writes.emplace_back(RegType::Csr, insn.csr, new_csr_val);
+
+            break;
+        }
+        case SystemInsnType::Csrrsi: {
+            std::uint64_t old_csr_val = core.get_csr(static_cast<Csr>(insn.csr));
+            std::uint64_t new_csr_val = old_csr_val | insn.uimm;
+
+            ret.reg_writes.emplace_back(RegType::X, insn.rd, old_csr_val);
+
+            if (insn.uimm) {
+                ret.reg_writes.emplace_back(RegType::Csr, insn.csr, new_csr_val);
+            }
+
+            break;
+        }
+        case SystemInsnType::Csrrci: {
+            std::uint64_t old_csr_val = core.get_csr(static_cast<Csr>(insn.csr));
+            std::uint64_t new_csr_val = old_csr_val & ~insn.uimm;
+
+            ret.reg_writes.emplace_back(RegType::X, insn.rd, old_csr_val);
+
+            if (insn.uimm) {
+                ret.reg_writes.emplace_back(RegType::Csr, insn.csr, new_csr_val);
+            }
 
             break;
         }
