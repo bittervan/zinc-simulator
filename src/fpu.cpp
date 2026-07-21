@@ -403,6 +403,56 @@ bool less_than(std::uint32_t lhs, std::uint32_t rhs) {
         : lhs_magnitude < rhs_magnitude;
 }
 
+FpResult compare(
+    OpFpType op,
+    std::uint32_t lhs_raw,
+    std::uint32_t rhs_raw
+) {
+    const UnpackedFp32 lhs{lhs_raw};
+    const UnpackedFp32 rhs{rhs_raw};
+    const bool lhs_nan = is_nan(lhs.classification());
+    const bool rhs_nan = is_nan(rhs.classification());
+
+    if (lhs_nan || rhs_nan) {
+        const bool invalid =
+            op != OpFpType::Eq ||
+            is_signaling_nan(lhs.classification()) ||
+            is_signaling_nan(rhs.classification());
+
+        return FpResult{
+            .value = 0,
+            .flags = invalid ? FP_FLAG_NV : 0,
+        };
+    }
+
+    const bool both_zero =
+        lhs.classification() == FpClass::Zero &&
+        rhs.classification() == FpClass::Zero;
+    const bool equal = both_zero || lhs_raw == rhs_raw;
+    bool result;
+
+    switch (op) {
+        case OpFpType::Eq:
+            result = equal;
+            break;
+        case OpFpType::Lt:
+            result = !both_zero && less_than(lhs_raw, rhs_raw);
+            break;
+        case OpFpType::Le:
+            result = equal || less_than(lhs_raw, rhs_raw);
+            break;
+        default:
+            throw std::logic_error(
+                "operation is not an FP32 comparison"
+            );
+    }
+
+    return FpResult{
+        .value = static_cast<std::uint32_t>(result),
+        .flags = 0,
+    };
+}
+
 FpResult min_or_max(std::uint32_t lhs_raw, std::uint32_t rhs_raw, bool maximum) {
     const UnpackedFp32 lhs{lhs_raw};
     const UnpackedFp32 rhs{rhs_raw};
@@ -678,6 +728,10 @@ FpResult Fpu::binary(OpFpType op, std::uint32_t lhs, std::uint32_t rhs, Rounding
                     ((lhs ^ rhs) & FP32_SIGN_MASK),
                 .flags = 0,
             };
+        case OpFpType::Eq:
+        case OpFpType::Lt:
+        case OpFpType::Le:
+            return compare(op, lhs, rhs);
         default:
             throw std::logic_error(
                 "operation is not a binary FP32 operation"

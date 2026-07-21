@@ -43,6 +43,9 @@ constexpr std::uint32_t OP_SGNJ_FUNCT3_INJECT_XOR = 0b010;
 
 constexpr std::uint32_t OP_FMV_FUNCT3 = 0b000;
 constexpr std::uint32_t OP_FCLASS_FUNCT3 = 0b001;
+constexpr std::uint32_t OP_EQ_FUNCT3 = 0b010;
+constexpr std::uint32_t OP_LT_FUNCT3 = 0b001;
+constexpr std::uint32_t OP_LE_FUNCT3 = 0b000;
 
 static inline std::uint32_t get_opcode(std::uint32_t insn) {
     return insn & 0b0000000'00000'00000'000'00000'1111111;
@@ -362,6 +365,28 @@ DecodedInsn Decoder::decode(std::uint32_t insn) {
                         );
                     }
                     type = OpFpType::MoveFromX;
+                    break;
+                }
+                case OP_FP_FUNCT7_COMPARE_S: {
+                    switch (funct3) {
+                        case OP_EQ_FUNCT3: {
+                            type = OpFpType::Eq;
+                            break;
+                        }
+                        case OP_LT_FUNCT3: {
+                            type = OpFpType::Lt;
+                            break;
+                        }
+                        case OP_LE_FUNCT3: {
+                            type = OpFpType::Le;
+                            break;
+                        }
+                        default: {
+                            throw std::runtime_error(
+                                std::format("Invalid funct3 {:03b} for FP compare instruction", funct3)
+                            );
+                        }
+                    }
                     break;
                 }
                 default: {

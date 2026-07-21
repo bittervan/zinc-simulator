@@ -737,7 +737,7 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpFpInsn& i
         rounding_mode = static_cast<RoundingMode>(frm);
     }
 
-    const auto append_fp_result = [&](const FpResult& result) {
+    const auto append_fp_flags = [&](const FpResult& result) {
         if (result.flags != 0) {
             ret.reg_writes.emplace_back(
                 RegType::Csr,
@@ -745,6 +745,10 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpFpInsn& i
                 core.get_csr(Csr::Fflags) | result.flags
             );
         }
+    };
+
+    const auto append_fp_result = [&](const FpResult& result) {
+        append_fp_flags(result);
 
         ret.reg_writes.emplace_back(
             RegType::F,
@@ -785,14 +789,30 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpFpInsn& i
             break;
         }
 
-        case OpFpType::Eq:
-        case OpFpType::Lt:
-        case OpFpType::Le:
         case OpFpType::CvtWFromS:
         case OpFpType::CvtWuFromS:
         case OpFpType::CvtLFromS:
         case OpFpType::CvtLuFromS: {
             // 调用对应 FPU 接口，结果写 RegType::X
+            break;
+        }
+
+        case OpFpType::Eq:
+        case OpFpType::Lt:
+        case OpFpType::Le: {
+            const FpResult result = Fpu::binary(
+                insn.type,
+                core.get_fpr(insn.rs1),
+                core.get_fpr(insn.rs2),
+                rounding_mode
+            );
+
+            append_fp_flags(result);
+            ret.reg_writes.emplace_back(
+                RegType::X,
+                insn.rd,
+                result.value
+            );
             break;
         }
 
