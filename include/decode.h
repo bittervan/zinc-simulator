@@ -235,6 +235,7 @@ using DecodedInsn = std::variant<
     LoadFpInsn,
     StoreFpInsn,
     OpFpInsn,
+    FmaFpInsn,
     InvalidInsn
 >;
 

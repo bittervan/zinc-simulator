@@ -42,11 +42,11 @@ public:
 
     static FpResult convert(OpFpType op, std::uint64_t operand, RoundingMode rm);
 
-    // static FpResult fma(
-    //     OpFma op,
-    //     std::uint32_t lhs,
-    //     std::uint32_t rhs,
-    //     std::uint32_t addend,
-    //     RoundingMode rm
-    // );
+    static FpResult fma(
+        FmaFpType op,
+        std::uint32_t lhs,
+        std::uint32_t rhs,
+        std::uint32_t addend,
+        RoundingMode rm
+    );
 };

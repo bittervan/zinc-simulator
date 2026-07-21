@@ -99,6 +99,14 @@ static inline std::uint32_t get_rs2(std::uint32_t insn) {
     return 0x1f & (insn >> 20);
 }
 
+static inline std::uint32_t get_rs3(std::uint32_t insn) {
+    return 0x1f & (insn >> 27);
+}
+
+static inline std::uint32_t get_fmt(std::uint32_t insn) {
+    return 0x3 & (insn >> 25);
+}
+
 static inline std::uint32_t get_zicsr_csr(std::uint32_t insn) {
     return 0xfff & (insn >> 20);
 }
@@ -295,6 +303,49 @@ DecodedInsn Decoder::decode(std::uint32_t insn) {
                 .imm = get_s_type_imm(insn),
                 .rs1 = get_rs1(insn),
                 .rs2 = get_rs2(insn),
+            };
+            break;
+        }
+        case OPCODE_MADD_FP:
+        case OPCODE_MSUB_FP:
+        case OPCODE_NMSUB_FP:
+        case OPCODE_NMADD_FP: {
+            if (get_fmt(insn) != 0b00) {
+                throw std::runtime_error(
+                    std::format("Unsupported FMA format {:02b}", get_fmt(insn))
+                );
+            }
+
+            FmaFpType type;
+            switch (get_opcode(insn)) {
+                case OPCODE_MADD_FP: {
+                    type = FmaFpType::MAdd;
+                    break;
+                }
+                case OPCODE_MSUB_FP: {
+                    type = FmaFpType::MSub;
+                    break;
+                }
+                case OPCODE_NMSUB_FP: {
+                    type = FmaFpType::NmSub;
+                    break;
+                }
+                case OPCODE_NMADD_FP: {
+                    type = FmaFpType::NmAdd;
+                    break;
+                }
+                default: {
+                    throw std::logic_error("Invalid FMA opcode");
+                }
+            }
+
+            ret = FmaFpInsn{
+                .type = type,
+                .rm = static_cast<RoundingMode>(get_funct3(insn)),
+                .rs1 = get_rs1(insn),
+                .rs2 = get_rs2(insn),
+                .rs3 = get_rs3(insn),
+                .rd = get_rd(insn),
             };
             break;
         }

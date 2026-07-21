@@ -913,6 +913,44 @@ StepResult Executor::execute(const Core &core, const Memory &, const OpFpInsn& i
     return ret;
 }
 
+StepResult Executor::execute(const Core &core, const Memory &, const FmaFpInsn& insn) {
+    NormalStep ret;
+
+    RoundingMode rounding_mode = insn.rm;
+    if (rounding_mode == RoundingMode::Dynamic) {
+        const std::uint64_t frm = core.get_csr(Csr::Frm);
+        if (frm > static_cast<std::uint64_t>(RoundingMode::Rmm)) {
+            throw std::runtime_error(
+                std::format("Invalid dynamic rounding mode {}", frm)
+            );
+        }
+        rounding_mode = static_cast<RoundingMode>(frm);
+    }
+
+    const FpResult result = Fpu::fma(
+        insn.type,
+        core.get_fpr(insn.rs1),
+        core.get_fpr(insn.rs2),
+        core.get_fpr(insn.rs3),
+        rounding_mode
+    );
+
+    if (result.flags != 0) {
+        ret.reg_writes.emplace_back(
+            RegType::Csr,
+            static_cast<std::uint32_t>(Csr::Fflags),
+            core.get_csr(Csr::Fflags) | result.flags
+        );
+    }
+
+    ret.reg_writes.emplace_back(
+        RegType::F,
+        insn.rd,
+        result.value
+    );
+    return ret;
+}
+
 StepResult Executor::execute(const Core &core, const Memory &mem, const InvalidInsn& insn) {
     (void)core;
     (void)mem;

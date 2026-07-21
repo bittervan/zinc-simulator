@@ -17,6 +17,13 @@ constexpr std::uint32_t FP_FLAG_NV = 1U << 4;
 
 constexpr std::uint64_t FP32_HIDDEN_BIT = 1ULL << 23;
 constexpr std::uint64_t FP32_EXTENDED_HIDDEN_BIT = 1ULL << 26;
+constexpr std::uint64_t FP32_WIDE_HIDDEN_BIT = 1ULL << 62;
+
+struct UnroundedFp32 {
+    bool sign;
+    std::int32_t exponent;
+    std::uint64_t significand;
+};
 
 bool is_nan(FpClass fp_class) {
     return fp_class == FpClass::SignalingNaN ||
@@ -145,6 +152,18 @@ FpResult round_and_pack(
         .value = sign_bits | (raw_exponent << 23) | fraction,
         .flags = flags,
     };
+}
+
+FpResult round_and_pack(
+    const UnroundedFp32& value,
+    RoundingMode rm
+) {
+    return round_and_pack(
+        value.sign,
+        value.exponent,
+        value.significand,
+        rm
+    );
 }
 
 FpResult propagate_nan(const UnpackedFp32& lhs, const UnpackedFp32& rhs) {
@@ -308,6 +327,82 @@ FpResult multiply(
         static_cast<std::int32_t>(product_at_least_two);
 
     return round_and_pack(sign, exponent, shift_right_jam(product, shift), rm);
+}
+
+UnroundedFp32 compute_fma(
+    const UnpackedFp32& lhs,
+    const UnpackedFp32& rhs,
+    const UnpackedFp32& addend,
+    bool product_sign,
+    bool addend_sign
+) {
+    const std::uint64_t product =
+        static_cast<std::uint64_t>(lhs.normalized_significand()) *
+        rhs.normalized_significand();
+    const bool product_at_least_two = (product & (1ULL << 47)) != 0;
+
+    std::uint64_t product_significand = product << (
+        product_at_least_two ? 15 : 16
+    );
+    std::int32_t product_exponent =
+        lhs.unbiased_exponent() +
+        rhs.unbiased_exponent() +
+        static_cast<std::int32_t>(product_at_least_two);
+
+    std::uint64_t addend_significand =
+        static_cast<std::uint64_t>(addend.normalized_significand()) << 39;
+    std::int32_t addend_exponent = addend_significand == 0
+        ? product_exponent
+        : addend.unbiased_exponent();
+    std::int32_t exponent = product_exponent;
+
+    if (product_exponent > addend_exponent) {
+        addend_significand = shift_right_jam(
+            addend_significand,
+            static_cast<unsigned>(product_exponent - addend_exponent)
+        );
+    } else if (addend_exponent > product_exponent) {
+        product_significand = shift_right_jam(
+            product_significand,
+            static_cast<unsigned>(addend_exponent - product_exponent)
+        );
+        exponent = addend_exponent;
+    }
+
+    std::uint64_t significand;
+    bool sign;
+
+    if (product_sign == addend_sign) {
+        significand = product_significand + addend_significand;
+        sign = product_sign;
+    } else if (product_significand >= addend_significand) {
+        significand = product_significand - addend_significand;
+        sign = product_sign;
+    } else {
+        significand = addend_significand - product_significand;
+        sign = addend_sign;
+    }
+
+    if (significand == 0) {
+        return UnroundedFp32{
+            .sign = false,
+            .exponent = exponent,
+            .significand = 0,
+        };
+    }
+
+    while (
+        (significand & (FP32_WIDE_HIDDEN_BIT | (1ULL << 63))) == 0
+    ) {
+        significand <<= 1;
+        --exponent;
+    }
+
+    return UnroundedFp32{
+        .sign = sign,
+        .exponent = exponent,
+        .significand = shift_right_jam(significand, 36),
+    };
 }
 
 struct DivisionResult {
@@ -1009,4 +1104,123 @@ FpResult Fpu::convert(OpFpType op, std::uint64_t operand, RoundingMode rm) {
                 "operation is not an FP32 conversion"
             );
     }
+}
+
+FpResult Fpu::fma(
+    FmaFpType op,
+    std::uint32_t lhs_raw,
+    std::uint32_t rhs_raw,
+    std::uint32_t addend_raw,
+    RoundingMode rm
+) {
+    bool negate_product;
+    bool negate_addend;
+
+    switch (op) {
+        case FmaFpType::MAdd:
+            negate_product = false;
+            negate_addend = false;
+            break;
+        case FmaFpType::MSub:
+            negate_product = false;
+            negate_addend = true;
+            break;
+        case FmaFpType::NmSub:
+            negate_product = true;
+            negate_addend = false;
+            break;
+        case FmaFpType::NmAdd:
+            negate_product = true;
+            negate_addend = true;
+            break;
+        default:
+            throw std::logic_error("invalid FP32 FMA operation");
+    }
+
+    const UnpackedFp32 lhs{lhs_raw};
+    const UnpackedFp32 rhs{rhs_raw};
+    const UnpackedFp32 addend{addend_raw};
+    const bool product_sign =
+        lhs.sign_bit() ^ rhs.sign_bit() ^ negate_product;
+    const bool addend_sign = addend.sign_bit() ^ negate_addend;
+    const bool lhs_zero = lhs.classification() == FpClass::Zero;
+    const bool rhs_zero = rhs.classification() == FpClass::Zero;
+    const bool lhs_infinity = lhs.classification() == FpClass::Infinity;
+    const bool rhs_infinity = rhs.classification() == FpClass::Infinity;
+    const bool addend_infinity =
+        addend.classification() == FpClass::Infinity;
+    const bool invalid_product =
+        (lhs_zero && rhs_infinity) ||
+        (lhs_infinity && rhs_zero);
+    const bool any_nan =
+        is_nan(lhs.classification()) ||
+        is_nan(rhs.classification()) ||
+        is_nan(addend.classification());
+    const bool signaling_nan =
+        is_signaling_nan(lhs.classification()) ||
+        is_signaling_nan(rhs.classification()) ||
+        is_signaling_nan(addend.classification());
+
+    if (any_nan || invalid_product) {
+        return FpResult{
+            .value = FP32_CANONICAL_NAN,
+            .flags = signaling_nan || invalid_product ? FP_FLAG_NV : 0,
+        };
+    }
+
+    const bool product_infinity = lhs_infinity || rhs_infinity;
+    if (product_infinity) {
+        if (addend_infinity && product_sign != addend_sign) {
+            return FpResult{
+                .value = FP32_CANONICAL_NAN,
+                .flags = FP_FLAG_NV,
+            };
+        }
+
+        return FpResult{
+            .value = (product_sign ? FP32_SIGN_MASK : 0) | FP32_INFINITY,
+            .flags = 0,
+        };
+    }
+
+    if (addend_infinity) {
+        return FpResult{
+            .value = (addend_sign ? FP32_SIGN_MASK : 0) | FP32_INFINITY,
+            .flags = 0,
+        };
+    }
+
+    const bool product_zero = lhs_zero || rhs_zero;
+    const bool addend_zero = addend.classification() == FpClass::Zero;
+    if (product_zero) {
+        if (addend_zero) {
+            const bool zero_sign = product_sign == addend_sign
+                ? product_sign
+                : rm == RoundingMode::Rdn;
+            return FpResult{
+                .value = zero_sign ? FP32_SIGN_MASK : 0,
+                .flags = 0,
+            };
+        }
+
+        return FpResult{
+            .value = (addend_raw & FP32_MAGNITUDE_MASK) |
+                (addend_sign ? FP32_SIGN_MASK : 0),
+            .flags = 0,
+        };
+    }
+
+    UnroundedFp32 result = compute_fma(
+        lhs,
+        rhs,
+        addend,
+        product_sign,
+        addend_sign
+    );
+
+    if (result.significand == 0) {
+        result.sign = rm == RoundingMode::Rdn;
+    }
+
+    return round_and_pack(result, rm);
 }
