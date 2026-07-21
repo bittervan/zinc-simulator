@@ -2,6 +2,7 @@
 #include <variant>
 #include <stdexcept>
 #include <format>
+#include <fpu.h>
 
 std::optional<Commit> Executor::step(Core &core, Memory &mem, const DecodedInsn &insn) {
     StepResult step_result = std::visit(
@@ -29,11 +30,45 @@ std::optional<Commit> Executor::step(Core &core, Memory &mem, const DecodedInsn 
         return write.type == RegType::X && write.num == 0;
     });
 
-    bool writes_fpr = std::any_of(result.reg_writes.begin(), result.reg_writes.end(), [](const RegWrite& write) {
-        return write.type == RegType::F;
+    std::vector<RegWrite> expanded_reg_writes;
+    expanded_reg_writes.reserve(result.reg_writes.size() + 1);
+
+    for (const RegWrite &write : result.reg_writes) {
+        if (
+            write.type == RegType::Csr &&
+            write.num == static_cast<std::uint32_t>(Csr::Fcsr)
+        ) {
+            expanded_reg_writes.emplace_back(
+                RegType::Csr,
+                static_cast<std::uint32_t>(Csr::Fflags),
+                write.value & 0x1fULL
+            );
+            expanded_reg_writes.emplace_back(
+                RegType::Csr,
+                static_cast<std::uint32_t>(Csr::Frm),
+                (write.value >> 5) & 0x7ULL
+            );
+        } else {
+            expanded_reg_writes.push_back(write);
+        }
+    }
+
+    result.reg_writes = std::move(expanded_reg_writes);
+
+    bool writes_fp_state = std::any_of(result.reg_writes.begin(), result.reg_writes.end(), [](const RegWrite& write) {
+        if (write.type == RegType::F) {
+            return true;
+        }
+
+        if (write.type != RegType::Csr) {
+            return false;
+        }
+
+        return write.num == static_cast<std::uint32_t>(Csr::Fflags) ||
+               write.num == static_cast<std::uint32_t>(Csr::Frm);
     });
 
-    if (writes_fpr) {
+    if (writes_fp_state) {
         std::uint64_t mstatus =
             core.get_csr(Csr::Mstatus);
 
@@ -41,11 +76,13 @@ std::optional<Commit> Executor::step(Core &core, Memory &mem, const DecodedInsn 
             (mstatus & ~MSTATUS_FS_MASK) |
             MSTATUS_FS_DIRTY;
 
-        result.reg_writes.emplace_back(
-            RegType::Csr,
-            static_cast<std::uint32_t>(Csr::Mstatus),
-            new_mstatus
-        );
+        if (new_mstatus != mstatus) {
+            result.reg_writes.emplace_back(
+                RegType::Csr,
+                static_cast<std::uint32_t>(Csr::Mstatus),
+                new_mstatus
+            );
+        }
     }
 
     core.set_pc(result.next_pc.value_or(core.get_pc() + 4));
@@ -673,7 +710,10 @@ StepResult Executor::execute(const Core &core, const Memory &, const Op32Insn& i
 
 StepResult Executor::execute(const Core &core, const Memory &mem, const LoadFpInsn& insn) {
     NormalStep ret;
-    ret.reg_writes.emplace_back(RegType::F, insn.rd, mem.get_32(core.get_gpr(insn.rs1) + insn.imm));
+    std::uint64_t addr = core.get_gpr(insn.rs1) + insn.imm;
+    std::uint32_t data = mem.get_32(addr);
+    ret.reg_writes.emplace_back(RegType::F, insn.rd, data);
+    ret.mem_reads.emplace_back(addr, data, 4);
     return ret;
 }
 
@@ -683,16 +723,157 @@ StepResult Executor::execute(const Core &core, const Memory &, const StoreFpInsn
     return ret;
 }
 
-StepResult Executor::execute(const Core &core, const Memory &mem, const OpFpInsn& insn) {
+StepResult Executor::execute(const Core &core, const Memory &, const OpFpInsn& insn) {
     NormalStep ret;
-    switch (insn.type) {
-        case OpFpType::Add : {
-            
+
+    RoundingMode rounding_mode = insn.rm;
+    if (rounding_mode == RoundingMode::Dynamic) {
+        const std::uint64_t frm = core.get_csr(Csr::Frm);
+        if (frm > static_cast<std::uint64_t>(RoundingMode::Rmm)) {
+            throw std::runtime_error(
+                std::format("Invalid dynamic rounding mode {}", frm)
+            );
         }
-        default: {
+        rounding_mode = static_cast<RoundingMode>(frm);
+    }
+
+    const auto append_fp_result = [&](const FpResult& result) {
+        if (result.flags != 0) {
+            ret.reg_writes.emplace_back(
+                RegType::Csr,
+                static_cast<std::uint32_t>(Csr::Fflags),
+                core.get_csr(Csr::Fflags) | result.flags
+            );
+        }
+
+        ret.reg_writes.emplace_back(
+            RegType::F,
+            insn.rd,
+            result.value
+        );
+    };
+
+    switch (insn.type) {
+        case OpFpType::Add:
+        case OpFpType::Sub:
+        case OpFpType::Mul:
+        case OpFpType::Div:
+        case OpFpType::Min:
+        case OpFpType::Max:
+        case OpFpType::Sgnj:
+        case OpFpType::Sgnjn:
+        case OpFpType::Sgnjx: {
+            const FpResult result = Fpu::binary(
+                insn.type,
+                core.get_fpr(insn.rs1),
+                core.get_fpr(insn.rs2),
+                rounding_mode
+            );
+
+            append_fp_result(result);
+            break;
+        }
+
+        case OpFpType::Sqrt: {
+            const FpResult result = Fpu::unary(
+                insn.type,
+                core.get_fpr(insn.rs1),
+                rounding_mode
+            );
+
+            append_fp_result(result);
+            break;
+        }
+
+        case OpFpType::Eq:
+        case OpFpType::Lt:
+        case OpFpType::Le:
+        case OpFpType::CvtWFromS:
+        case OpFpType::CvtWuFromS:
+        case OpFpType::CvtLFromS:
+        case OpFpType::CvtLuFromS: {
+            // 调用对应 FPU 接口，结果写 RegType::X
+            break;
+        }
+
+        case OpFpType::CvtSToW:
+        case OpFpType::CvtSToWu:
+        case OpFpType::CvtSToL:
+        case OpFpType::CvtSToLu: {
+            // 从 GPR 读取，结果写 RegType::F
+            break;
+        }
+
+        case OpFpType::Class: {
+            const UnpackedFp32 operand{
+                static_cast<std::uint32_t>(core.get_fpr(insn.rs1))
+            };
+            std::uint64_t value = 0;
+
+            switch (operand.classification()) {
+                case FpClass::Infinity: {
+                    value = operand.sign_bit() ? 1ULL << 0 : 1ULL << 7;
+                    break;
+                }
+                case FpClass::Normal: {
+                    value = operand.sign_bit() ? 1ULL << 1 : 1ULL << 6;
+                    break;
+                }
+                case FpClass::Subnormal: {
+                    value = operand.sign_bit() ? 1ULL << 2 : 1ULL << 5;
+                    break;
+                }
+                case FpClass::Zero: {
+                    value = operand.sign_bit() ? 1ULL << 3 : 1ULL << 4;
+                    break;
+                }
+                case FpClass::SignalingNaN: {
+                    value = 1ULL << 8;
+                    break;
+                }
+                case FpClass::QuietNaN: {
+                    value = 1ULL << 9;
+                    break;
+                }
+            }
+
+            ret.reg_writes.emplace_back(
+                RegType::X,
+                insn.rd,
+                value
+            );
+            break;
+        }
+
+        case OpFpType::MoveToX: {
+            const std::uint64_t value = static_cast<std::uint64_t>(
+                static_cast<std::int64_t>(
+                    static_cast<std::int32_t>(core.get_fpr(insn.rs1))
+                )
+            );
+
+            ret.reg_writes.emplace_back(
+                RegType::X,
+                insn.rd,
+                value
+            );
+            break;
+        }
+
+        case OpFpType::MoveFromX: {
+            const std::uint32_t value =
+                static_cast<std::uint32_t>(core.get_gpr(insn.rs1));
+
+            ret.reg_writes.emplace_back(
+                RegType::F,
+                insn.rd,
+                value
+            );
             break;
         }
     }
+
+    return ret;
 }
 
 StepResult Executor::execute(const Core &core, const Memory &mem, const InvalidInsn& insn) {

@@ -41,6 +41,9 @@ constexpr std::uint32_t OP_SGNJ_FUNCT3_INJECT = 0b000;
 constexpr std::uint32_t OP_SGNJ_FUNCT3_INJECT_NEGATED = 0b001;
 constexpr std::uint32_t OP_SGNJ_FUNCT3_INJECT_XOR = 0b010;
 
+constexpr std::uint32_t OP_FMV_FUNCT3 = 0b000;
+constexpr std::uint32_t OP_FCLASS_FUNCT3 = 0b001;
+
 static inline std::uint32_t get_opcode(std::uint32_t insn) {
     return insn & 0b0000000'00000'00000'000'00000'1111111;
 }
@@ -328,6 +331,39 @@ DecodedInsn Decoder::decode(std::uint32_t insn) {
                     }
                     break;
                 }
+                case OP_FP_FUNCT7_MOVE_TO_INT_OR_CLASS_S: {
+                    if (get_rs2(insn) != 0) {
+                        throw std::runtime_error(
+                            std::format("Invalid FMV.X.W/FCLASS.S instruction {:08x}", insn)
+                        );
+                    }
+
+                    switch (funct3) {
+                        case OP_FMV_FUNCT3: {
+                            type = OpFpType::MoveToX;
+                            break;
+                        }
+                        case OP_FCLASS_FUNCT3: {
+                            type = OpFpType::Class;
+                            break;
+                        }
+                        default: {
+                            throw std::runtime_error(
+                                std::format("Invalid funct3 {:03b} for FMV.X.W/FCLASS.S instruction", funct3)
+                            );
+                        }
+                    }
+                    break;
+                }
+                case OP_FP_FUNCT7_MOVE_FROM_INT_S: {
+                    if (funct3 != OP_FMV_FUNCT3 || get_rs2(insn) != 0) {
+                        throw std::runtime_error(
+                            std::format("Invalid FMV.W.X instruction {:08x}", insn)
+                        );
+                    }
+                    type = OpFpType::MoveFromX;
+                    break;
+                }
                 default: {
                     throw std::runtime_error(
                         std::format("Funct7 {:07b} for OpFpInsn not implemented, cannot decode", funct7)
@@ -337,7 +373,7 @@ DecodedInsn Decoder::decode(std::uint32_t insn) {
 
             ret = OpFpInsn {
                 // .funct7 = get_funct7(insn),
-                .type = static_cast<OpFpType>(0),
+                .type = type,
                 .rm = static_cast<RoundingMode>(get_funct3(insn)),
                 .rs1 = get_rs1(insn),
                 .rs2 = get_rs2(insn),

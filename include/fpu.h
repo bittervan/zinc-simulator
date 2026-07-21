@@ -24,8 +24,13 @@ class UnpackedFp32 {
     FpClass fp_class;
 
 public:
-    UnpackedFp32(std::uint32_t raw);
-    uint32_t to_bits() const;
+    explicit UnpackedFp32(std::uint32_t raw);
+
+    [[nodiscard]] std::uint32_t to_bits() const;
+    [[nodiscard]] bool sign_bit() const { return sign; }
+    [[nodiscard]] std::int32_t unbiased_exponent() const { return exponent; }
+    [[nodiscard]] std::uint32_t normalized_significand() const { return significand; }
+    [[nodiscard]] FpClass classification() const { return fp_class; }
 };
 
 class Fpu {
